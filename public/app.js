@@ -117,56 +117,110 @@ const SoundFX = {
     if (btn3) btn3.classList.toggle('btn-muted', !this.enabled);
   },
 
-  // Soft tactile click for buttons
+  // Highlighting & Fluid Tactile Click (water droplet pop + crystal snap + tactile thump)
   click() {
     if (!this.enabled) return;
     try {
       const ctx = this._getCtx();
       if (!ctx) return;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      const filter = ctx.createBiquadFilter();
+      if (ctx.state === 'suspended') ctx.resume();
 
-      filter.type = 'lowpass';
-      filter.frequency.setValueAtTime(1400, ctx.currentTime);
+      const t = ctx.currentTime;
+      // Micro-pitch variance (±4%) for rich organic, non-fatiguing fluidity
+      const pitch = 1 + (Math.random() - 0.5) * 0.08;
 
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(320, ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(80, ctx.currentTime + 0.035);
+      // --- Layer 1: Fluid Water Droplet Swoop & Resonance ---
+      const dropOsc = ctx.createOscillator();
+      const dropGain = ctx.createGain();
+      const dropFilter = ctx.createBiquadFilter();
 
-      gain.gain.setValueAtTime(0.07, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.035);
+      dropOsc.type = 'sine';
+      // Fluid frequency swoop down (starts high with bubble pop, swoops down)
+      dropOsc.frequency.setValueAtTime(680 * pitch, t);
+      dropOsc.frequency.exponentialRampToValueAtTime(260 * pitch, t + 0.045);
 
-      osc.connect(filter);
-      filter.connect(gain);
-      gain.connect(ctx.destination);
+      // Formant resonance filter for organic liquid droplet tone
+      dropFilter.type = 'peaking';
+      dropFilter.frequency.setValueAtTime(740 * pitch, t);
+      dropFilter.Q.setValueAtTime(3.8, t);
+      dropFilter.gain.setValueAtTime(4, t);
 
-      osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + 0.04);
+      dropGain.gain.setValueAtTime(0.001, t);
+      dropGain.gain.linearRampToValueAtTime(0.13, t + 0.003);
+      dropGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+
+      dropOsc.connect(dropFilter);
+      dropFilter.connect(dropGain);
+      dropGain.connect(ctx.destination);
+      dropOsc.start(t);
+      dropOsc.stop(t + 0.052);
+
+      // --- Layer 2: Highlighting Crystalline Glass Ring / Snap ---
+      const glassOsc = ctx.createOscillator();
+      const glassGain = ctx.createGain();
+      const glassFilter = ctx.createBiquadFilter();
+
+      glassOsc.type = 'triangle';
+      glassOsc.frequency.setValueAtTime(2150 * pitch, t);
+      glassOsc.frequency.exponentialRampToValueAtTime(1650 * pitch, t + 0.038);
+
+      glassFilter.type = 'highpass';
+      glassFilter.frequency.setValueAtTime(1400, t);
+
+      glassGain.gain.setValueAtTime(0.001, t);
+      glassGain.gain.linearRampToValueAtTime(0.065, t + 0.001);
+      glassGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.04);
+
+      glassOsc.connect(glassFilter);
+      glassFilter.connect(glassGain);
+      glassGain.connect(ctx.destination);
+      glassOsc.start(t);
+      glassOsc.stop(t + 0.042);
+
+      // --- Layer 3: Warm Tactile Sub Body ---
+      const subOsc = ctx.createOscillator();
+      const subGain = ctx.createGain();
+      subOsc.type = 'sine';
+      subOsc.frequency.setValueAtTime(115 * pitch, t);
+      subOsc.frequency.exponentialRampToValueAtTime(55 * pitch, t + 0.028);
+
+      subGain.gain.setValueAtTime(0.001, t);
+      subGain.gain.linearRampToValueAtTime(0.09, t + 0.002);
+      subGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.03);
+
+      subOsc.connect(subGain);
+      subGain.connect(ctx.destination);
+      subOsc.start(t);
+      subOsc.stop(t + 0.032);
     } catch (e) {}
   },
 
-  // Subtle tick on hovering cards
+  // Silky fluid droplet hover
   hover() {
     if (!this.enabled) return;
     try {
       const ctx = this._getCtx();
       if (!ctx) return;
+      if (ctx.state === 'suspended') ctx.resume();
+
+      const t = ctx.currentTime;
+      const pitch = 1 + (Math.random() - 0.5) * 0.06;
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
 
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(540, ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(380, ctx.currentTime + 0.012);
+      osc.frequency.setValueAtTime(780 * pitch, t);
+      osc.frequency.exponentialRampToValueAtTime(520 * pitch, t + 0.018);
 
-      gain.gain.setValueAtTime(0.015, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.012);
+      gain.gain.setValueAtTime(0.001, t);
+      gain.gain.linearRampToValueAtTime(0.022, t + 0.002);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.02);
 
       osc.connect(gain);
       gain.connect(ctx.destination);
 
-      osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + 0.015);
+      osc.start(t);
+      osc.stop(t + 0.022);
     } catch (e) {}
   },
 
@@ -354,10 +408,15 @@ const ParticleFX = {
   height: 0,
   particles: [],
   bursts: [],
-  mouseX: 0,
-  mouseY: 0,
+  shockwaves: [],
+  cursorX: -9999,
+  cursorY: -9999,
+  cursorVx: 0,
+  cursorVy: 0,
   targetMouseX: 0,
   targetMouseY: 0,
+  mouseX: 0,
+  mouseY: 0,
   animId: null,
   isPaused: false,
 
@@ -369,20 +428,35 @@ const ParticleFX = {
 
     window.addEventListener('resize', () => this.resize());
     window.addEventListener('mousemove', (e) => {
-      this.targetMouseX = (e.clientX / (this.width || 1) - 0.5) * 50;
-      this.targetMouseY = (e.clientY / (this.height || 1) - 0.5) * 50;
+      if (this.cursorX > -1000) {
+        this.cursorVx = e.clientX - this.cursorX;
+        this.cursorVy = e.clientY - this.cursorY;
+      }
+      this.cursorX = e.clientX;
+      this.cursorY = e.clientY;
+      this.targetMouseX = (e.clientX / (this.width || 1) - 0.5) * 45;
+      this.targetMouseY = (e.clientY / (this.height || 1) - 0.5) * 45;
     });
 
-    // 40 ambient drifting stardust / light motes
-    const count = Math.min(45, Math.floor(window.innerWidth / 35));
+    window.addEventListener('mouseleave', () => {
+      this.cursorX = -9999;
+      this.cursorY = -9999;
+      this.cursorVx = 0;
+      this.cursorVy = 0;
+    });
+
+    // Generate responsive set of luminous bubbles & stardust motes
+    const count = Math.min(80, Math.max(55, Math.floor(window.innerWidth / 22)));
     for (let i = 0; i < count; i++) {
-      this.particles.push(this._createMote());
+      // 55% translucent glassy liquid bubbles, 45% stardust motes
+      const isBubble = i % 10 < 6;
+      this.particles.push(this._createParticle(isBubble));
     }
 
-    // Page-wide click micro-bursts (tactile spark response)
+    // Page-wide click shockwaves & fluid star sparkles
     document.addEventListener('click', (e) => {
       if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
-      this.burst(e.clientX, e.clientY, 8);
+      this.burst(e.clientX, e.clientY, 14);
     });
 
     document.addEventListener('visibilitychange', () => {
@@ -404,46 +478,139 @@ const ParticleFX = {
     this.ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
   },
 
-  _createMote() {
-    const colors = [
-      'rgba(88, 166, 255, ',   // blue
-      'rgba(163, 113, 247, ',  // purple
-      'rgba(240, 136, 62, ',   // amber
-      'rgba(57, 211, 83, ',    // green
-      'rgba(255, 255, 255, '   // white
+  _createParticle(isBubble = true) {
+    const palette = [
+      { r: 56, g: 189, b: 248, hex: '#38bdf8' },  // Electric Cyan
+      { r: 192, g: 132, b: 252, hex: '#c084fc' }, // Vivid Lavender
+      { r: 52, g: 211, b: 153, hex: '#34d399' },  // Cyber Emerald
+      { r: 251, g: 191, b: 36, hex: '#fbbf24' },  // Solar Amber
+      { r: 244, g: 114, b: 182, hex: '#f472b6' }, // Neon Rose
+      { r: 96, g: 165, b: 250, hex: '#60a5fa' }   // Electric Blue
     ];
-    return {
-      x: Math.random() * (this.width || 800),
-      y: Math.random() * (this.height || 600),
-      radius: Math.random() * 2.2 + 0.8,
-      colorPrefix: colors[Math.floor(Math.random() * colors.length)],
-      alpha: Math.random() * 0.32 + 0.12,
-      baseAlpha: Math.random() * 0.32 + 0.12,
-      vx: (Math.random() - 0.5) * 0.35,
-      vy: -Math.random() * 0.45 - 0.12,
-      sineOffset: Math.random() * Math.PI * 2,
-      sineSpeed: Math.random() * 0.02 + 0.01,
-      depth: Math.random() * 0.8 + 0.4
-    };
+    const color = palette[Math.floor(Math.random() * palette.length)];
+
+    if (isBubble) {
+      // Luminous Glass / Liquid Bubble: 10px to 32px
+      const radius = Math.random() * 18 + 10;
+      const alpha = Math.random() * 0.32 + 0.38; // Rich visibility
+      const baseVx = (Math.random() - 0.5) * 0.35;
+      const baseVy = -Math.random() * 0.42 - 0.12; // Gentle upward drift
+      return {
+        isBubble: true,
+        x: Math.random() * (this.width || 800),
+        y: Math.random() * (this.height || 600),
+        radius,
+        color,
+        alpha,
+        baseAlpha: alpha,
+        vx: baseVx,
+        vy: baseVy,
+        baseVx,
+        baseVy,
+        pulsePhase: Math.random() * Math.PI * 2,
+        pulseSpeed: Math.random() * 0.02 + 0.015,
+        depth: Math.random() * 0.6 + 0.4
+      };
+    } else {
+      // Radiant Stardust Mote: 2.2px to 4.8px
+      const radius = Math.random() * 2.6 + 1.8;
+      const alpha = Math.random() * 0.4 + 0.35;
+      const baseVx = (Math.random() - 0.5) * 0.4;
+      const baseVy = -Math.random() * 0.5 - 0.1;
+      return {
+        isBubble: false,
+        x: Math.random() * (this.width || 800),
+        y: Math.random() * (this.height || 600),
+        radius,
+        color,
+        alpha,
+        baseAlpha: alpha,
+        vx: baseVx,
+        vy: baseVy,
+        baseVx,
+        baseVy,
+        pulsePhase: Math.random() * Math.PI * 2,
+        pulseSpeed: Math.random() * 0.035 + 0.02,
+        depth: Math.random() * 0.8 + 0.4
+      };
+    }
   },
 
-  burst(x, y, count = 10, customColors = null) {
+  // Radial physical shockwave pushing nearby bubbles outward
+  triggerShockwave(x, y, maxR = 210, colorPrefix = 'rgba(56, 189, 248, ') {
+    this.shockwaves.push({
+      x,
+      y,
+      r: 6,
+      maxR,
+      speed: 7.2,
+      colorPrefix,
+      alpha: 0.9,
+      decay: 0.024
+    });
+
+    // Physics impulse: push nearby bubbles dynamically away
+    for (let i = 0; i < this.particles.length; i++) {
+      const p = this.particles[i];
+      const dx = p.x - x;
+      const dy = p.y - y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < maxR + 80 && dist > 1) {
+        const force = Math.pow(1 - dist / (maxR + 80), 1.3) * 11;
+        p.vx += (dx / dist) * force;
+        p.vy += (dy / dist) * force;
+      }
+    }
+  },
+
+  // Highlighting click burst with fluid droplet trails, diamond stars, and shockwaves
+  burst(x, y, count = 14, customColors = null) {
+    this.triggerShockwave(x, y, 190);
+
     const palette = customColors || [
-      '#58a6ff', '#a371f7', '#f0883e', '#39d353', '#ffd166', '#ffffff'
+      '#38bdf8', '#c084fc', '#facc15', '#34d399', '#ffffff', '#fb7185', '#60a5fa'
     ];
-    for (let i = 0; i < count; i++) {
+
+    // 1. Spawning 4-point diamond star sparkles
+    const starCount = Math.min(5, Math.max(3, Math.floor(count * 0.35)));
+    for (let i = 0; i < starCount; i++) {
       const angle = Math.random() * Math.PI * 2;
-      const speed = Math.random() * 3.6 + 1.2;
+      const speed = Math.random() * 4.2 + 2.0;
       this.bursts.push({
+        isStar: true,
         x,
         y,
+        prevX: x,
+        prevY: y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 0.5,
+        color: palette[Math.floor(Math.random() * palette.length)],
+        radius: Math.random() * 3.5 + 3.2,
+        rot: Math.random() * Math.PI,
+        rotSpeed: (Math.random() - 0.5) * 0.28,
+        life: 1.0,
+        decay: Math.random() * 0.028 + 0.022,
+        gravity: 0.04
+      });
+    }
+
+    // 2. Spawning fluid droplet sparks with motion tails
+    for (let i = 0; i < count; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = Math.random() * 4.8 + 1.4;
+      this.bursts.push({
+        isDroplet: true,
+        x,
+        y,
+        prevX: x,
+        prevY: y,
         vx: Math.cos(angle) * speed,
         vy: Math.sin(angle) * speed,
         color: palette[Math.floor(Math.random() * palette.length)],
-        radius: Math.random() * 2.4 + 1.2,
+        radius: Math.random() * 2.8 + 1.4,
         life: 1.0,
-        decay: Math.random() * 0.035 + 0.025,
-        gravity: 0.06
+        decay: Math.random() * 0.032 + 0.024,
+        gravity: 0.07
       });
     }
   },
@@ -451,26 +618,51 @@ const ParticleFX = {
   celebrate(originX = null, originY = null) {
     const x = originX !== null ? originX : (this.width || 800) / 2;
     const y = originY !== null ? originY : (this.height || 600) * 0.42;
-    const palette = ['#388bfd', '#a371f7', '#39d353', '#f0883e', '#e3b341', '#f85149', '#ffffff'];
+    this.triggerShockwave(x, y, 320, 'rgba(192, 132, 252, ');
 
-    for (let i = 0; i < 75; i++) {
+    const palette = ['#38bdf8', '#c084fc', '#34d399', '#facc15', '#fb7185', '#60a5fa', '#ffffff'];
+
+    for (let i = 0; i < 90; i++) {
       const angle = Math.random() * Math.PI * 2;
-      const speed = Math.random() * 7.5 + 2.5;
+      const speed = Math.random() * 8.2 + 2.8;
+      const isConfetti = Math.random() > 0.45;
+      const isStar = !isConfetti && Math.random() > 0.5;
+
       this.bursts.push({
-        x: x + (Math.random() - 0.5) * 40,
-        y: y + (Math.random() - 0.5) * 20,
+        x: x + (Math.random() - 0.5) * 45,
+        y: y + (Math.random() - 0.5) * 25,
+        prevX: x,
+        prevY: y,
         vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed - 2.5,
+        vy: Math.sin(angle) * speed - 2.8,
         color: palette[Math.floor(Math.random() * palette.length)],
-        radius: Math.random() * 3.4 + 1.5,
+        radius: Math.random() * 3.6 + 1.8,
         life: 1.0,
-        decay: Math.random() * 0.018 + 0.012,
-        gravity: 0.16,
-        isConfetti: Math.random() > 0.4,
-        rotation: Math.random() * Math.PI * 2,
-        rotSpeed: (Math.random() - 0.5) * 0.2
+        decay: Math.random() * 0.016 + 0.012,
+        gravity: 0.15,
+        isConfetti,
+        isStar,
+        rot: Math.random() * Math.PI * 2,
+        rotSpeed: (Math.random() - 0.5) * 0.22
       });
     }
+  },
+
+  _drawSparkleStar(ctx, x, y, outerR, innerR, angle) {
+    ctx.beginPath();
+    for (let i = 0; i < 4; i++) {
+      const a1 = angle + (i * Math.PI) / 2;
+      const a2 = a1 + Math.PI / 4;
+      const ox = x + Math.cos(a1) * outerR;
+      const oy = y + Math.sin(a1) * outerR;
+      const ix = x + Math.cos(a2) * innerR;
+      const iy = y + Math.sin(a2) * innerR;
+      if (i === 0) ctx.moveTo(ox, oy);
+      else ctx.lineTo(ox, oy);
+      ctx.lineTo(ix, iy);
+    }
+    ctx.closePath();
+    ctx.fill();
   },
 
   loop() {
@@ -479,42 +671,178 @@ const ParticleFX = {
       return;
     }
 
-    this.mouseX += (this.targetMouseX - this.mouseX) * 0.05;
-    this.mouseY += (this.targetMouseY - this.mouseY) * 0.05;
+    // Smooth cursor movement & velocity damping
+    this.mouseX += (this.targetMouseX - this.mouseX) * 0.06;
+    this.mouseY += (this.targetMouseY - this.mouseY) * 0.06;
+    this.cursorVx *= 0.88;
+    this.cursorVy *= 0.88;
 
     this.ctx.clearRect(0, 0, this.width, this.height);
 
-    // 1. Ambient floating particles
+    const hasCursor = this.cursorX > -1000 && this.cursorY > -1000;
+    const mouseSpeed = Math.hypot(this.cursorVx, this.cursorVy);
+
+    // 1. Constellation filaments between nearby bubbles (step by 2 for 60fps)
+    for (let i = 0; i < this.particles.length; i += 2) {
+      const p1 = this.particles[i];
+      if (!p1.isBubble) continue;
+      for (let j = i + 1; j < this.particles.length; j += 2) {
+        const p2 = this.particles[j];
+        if (!p2.isBubble) continue;
+        const ddx = p1.x - p2.x;
+        const ddy = p1.y - p2.y;
+        const ddist = Math.hypot(ddx, ddy);
+        if (ddist < 110) {
+          const alpha = (1 - ddist / 110) * 0.22;
+          this.ctx.beginPath();
+          this.ctx.moveTo(p1.x, p1.y);
+          this.ctx.lineTo(p2.x, p2.y);
+          this.ctx.strokeStyle = `rgba(${p1.color.r}, ${p1.color.g}, ${p1.color.b}, ${alpha.toFixed(3)})`;
+          this.ctx.lineWidth = 0.8;
+          this.ctx.stroke();
+        }
+      }
+    }
+
+    // 2. Living Ambient Floating Bubbles & Stardust
     for (let i = 0; i < this.particles.length; i++) {
       const p = this.particles[i];
-      p.sineOffset += p.sineSpeed;
-      p.x += p.vx + Math.sin(p.sineOffset) * 0.25;
+
+      // Interactive mouse physics: fluid repulsion + hydrodynamic vortex
+      if (hasCursor) {
+        const dx = p.x - this.cursorX;
+        const dy = p.y - this.cursorY;
+        const dist = Math.hypot(dx, dy);
+        const influenceR = p.isBubble ? 165 : 125;
+
+        if (dist < influenceR && dist > 1) {
+          const ratio = 1 - dist / influenceR;
+          // Fluid repulsion force
+          const force = Math.pow(ratio, 1.4) * 4.4;
+          p.vx += (dx / dist) * force;
+          p.vy += (dy / dist) * force;
+
+          // Liquid wake swirl
+          if (mouseSpeed > 0.6) {
+            const swirl = ratio * 1.6;
+            p.vx += (-dy / dist) * (this.cursorVx * 0.05) * swirl;
+            p.vy += (dx / dist) * (this.cursorVy * 0.05) * swirl;
+          }
+
+          // Interactive bioluminescent light filament to cursor
+          if (dist < 135) {
+            this.ctx.beginPath();
+            this.ctx.moveTo(p.x, p.y);
+            this.ctx.lineTo(this.cursorX, this.cursorY);
+            this.ctx.strokeStyle = `rgba(${p.color.r}, ${p.color.g}, ${p.color.b}, ${(ratio * 0.35).toFixed(3)})`;
+            this.ctx.lineWidth = 1.0;
+            this.ctx.stroke();
+          }
+        }
+      }
+
+      // Physics damping & return to natural current
+      p.vx *= 0.94;
+      p.vy *= 0.94;
+      p.vx += (p.baseVx - p.vx) * 0.025;
+      p.vy += (p.baseVy - p.vy) * 0.025;
+
+      p.pulsePhase += p.pulseSpeed;
+      p.x += p.vx + Math.sin(p.pulsePhase) * 0.32;
       p.y += p.vy;
 
-      if (p.y < -10) {
-        p.y = this.height + 10;
+      // Screen boundary wrap
+      if (p.y < -40) {
+        p.y = this.height + 30;
         p.x = Math.random() * this.width;
       }
-      if (p.x < -10) p.x = this.width + 10;
-      if (p.x > this.width + 10) p.x = -10;
+      if (p.x < -40) p.x = this.width + 30;
+      if (p.x > this.width + 40) p.x = -30;
 
-      const currentAlpha = p.baseAlpha + Math.sin(p.sineOffset) * 0.08;
+      const currentAlpha = Math.max(0.12, p.baseAlpha + Math.sin(p.pulsePhase) * 0.09);
       const posX = p.x + this.mouseX * p.depth;
       const posY = p.y + this.mouseY * p.depth;
 
-      this.ctx.beginPath();
-      this.ctx.arc(posX, posY, p.radius, 0, Math.PI * 2);
-      this.ctx.fillStyle = `${p.colorPrefix}${Math.max(0.04, currentAlpha)})`;
-      this.ctx.fill();
+      if (p.isBubble) {
+        // Luminous Glass / Liquid Bubble Rendering with Specular Sheen
+        const r = p.radius * (1 + 0.07 * Math.sin(p.pulsePhase));
+
+        // Radial core gradient
+        const grad = this.ctx.createRadialGradient(
+          posX - r * 0.32, posY - r * 0.32, r * 0.08,
+          posX, posY, r
+        );
+        grad.addColorStop(0, `rgba(255, 255, 255, ${(currentAlpha * 0.92).toFixed(2)})`);
+        grad.addColorStop(0.28, `rgba(${p.color.r}, ${p.color.g}, ${p.color.b}, ${(currentAlpha * 0.55).toFixed(2)})`);
+        grad.addColorStop(0.72, `rgba(${p.color.r}, ${p.color.g}, ${p.color.b}, ${(currentAlpha * 0.22).toFixed(2)})`);
+        grad.addColorStop(1, `rgba(${p.color.r}, ${p.color.g}, ${p.color.b}, ${(currentAlpha * 0.88).toFixed(2)})`);
+
+        this.ctx.beginPath();
+        this.ctx.arc(posX, posY, r, 0, Math.PI * 2);
+        this.ctx.fillStyle = grad;
+        this.ctx.fill();
+
+        // Luminous outer rim
+        this.ctx.lineWidth = 1.4;
+        this.ctx.strokeStyle = `rgba(${p.color.r}, ${p.color.g}, ${p.color.b}, ${Math.min(1, currentAlpha * 1.2).toFixed(2)})`;
+        this.ctx.stroke();
+
+        // Specular glint
+        this.ctx.beginPath();
+        this.ctx.arc(posX - r * 0.36, posY - r * 0.36, r * 0.22, 0, Math.PI * 2);
+        this.ctx.fillStyle = `rgba(255, 255, 255, ${Math.min(0.85, currentAlpha * 1.25).toFixed(2)})`;
+        this.ctx.fill();
+
+        // Secondary micro reflection
+        this.ctx.beginPath();
+        this.ctx.arc(posX + r * 0.32, posY + r * 0.32, r * 0.09, 0, Math.PI * 2);
+        this.ctx.fillStyle = `rgba(255, 255, 255, ${(currentAlpha * 0.45).toFixed(2)})`;
+        this.ctx.fill();
+      } else {
+        // Radiant Stardust Mote with Soft Halo
+        const moteGrad = this.ctx.createRadialGradient(posX, posY, 0, posX, posY, p.radius * 2.5);
+        moteGrad.addColorStop(0, `rgba(255, 255, 255, ${currentAlpha.toFixed(2)})`);
+        moteGrad.addColorStop(0.35, `rgba(${p.color.r}, ${p.color.g}, ${p.color.b}, ${(currentAlpha * 0.8).toFixed(2)})`);
+        moteGrad.addColorStop(1, `rgba(${p.color.r}, ${p.color.g}, ${p.color.b}, 0)`);
+
+        this.ctx.beginPath();
+        this.ctx.arc(posX, posY, p.radius * 2.5, 0, Math.PI * 2);
+        this.ctx.fillStyle = moteGrad;
+        this.ctx.fill();
+      }
     }
 
-    // 2. Click micro-bursts / celebration sparks
+    // 3. Shockwave Rings
+    for (let i = this.shockwaves.length - 1; i >= 0; i--) {
+      const sw = this.shockwaves[i];
+      sw.r += sw.speed;
+      sw.alpha = (1 - sw.r / sw.maxR) * 0.85;
+
+      if (sw.r >= sw.maxR || sw.alpha <= 0.01) {
+        this.shockwaves.splice(i, 1);
+        continue;
+      }
+
+      this.ctx.save();
+      this.ctx.beginPath();
+      this.ctx.arc(sw.x, sw.y, sw.r, 0, Math.PI * 2);
+      this.ctx.lineWidth = Math.max(1, (1 - sw.r / sw.maxR) * 2.8);
+      this.ctx.strokeStyle = `${sw.colorPrefix}${sw.alpha.toFixed(2)})`;
+      this.ctx.shadowColor = sw.colorPrefix + '0.7)';
+      this.ctx.shadowBlur = 12;
+      this.ctx.stroke();
+      this.ctx.restore();
+    }
+
+    // 4. Click micro-bursts / sparkles / stars
     for (let i = this.bursts.length - 1; i >= 0; i--) {
       const b = this.bursts[i];
+      b.prevX = b.x;
+      b.prevY = b.y;
       b.x += b.vx;
       b.y += b.vy;
       b.vy += b.gravity;
-      b.vx *= 0.98;
+      b.vx *= 0.97;
       b.life -= b.decay;
 
       if (b.life <= 0) {
@@ -525,12 +853,26 @@ const ParticleFX = {
       this.ctx.save();
       this.ctx.globalAlpha = Math.max(0, b.life);
       this.ctx.fillStyle = b.color;
+      this.ctx.strokeStyle = b.color;
 
-      if (b.isConfetti) {
-        b.rotation += b.rotSpeed;
+      if (b.isStar) {
+        b.rot += b.rotSpeed;
+        const outerR = b.radius * (0.4 + 0.6 * b.life);
+        const innerR = outerR * 0.28;
+        this._drawSparkleStar(this.ctx, b.x, b.y, outerR, innerR, b.rot);
+      } else if (b.isConfetti) {
+        b.rot += b.rotSpeed;
         this.ctx.translate(b.x, b.y);
-        this.ctx.rotate(b.rotation);
+        this.ctx.rotate(b.rot);
         this.ctx.fillRect(-b.radius, -b.radius * 0.6, b.radius * 2, b.radius * 1.2);
+      } else if (b.isDroplet) {
+        // Fluid droplet trail
+        this.ctx.lineWidth = b.radius * b.life;
+        this.ctx.lineCap = 'round';
+        this.ctx.beginPath();
+        this.ctx.moveTo(b.prevX, b.prevY);
+        this.ctx.lineTo(b.x, b.y);
+        this.ctx.stroke();
       } else {
         this.ctx.beginPath();
         this.ctx.arc(b.x, b.y, b.radius * b.life, 0, Math.PI * 2);
@@ -1343,6 +1685,35 @@ const UI = {
     }, 2200);
   },
 
+  // ---- Fluid Ripple Effect on Clicks ----
+  createFluidRipple(e, target) {
+    if (!target) return;
+    try {
+      const rect = target.getBoundingClientRect();
+      const ripple = document.createElement('span');
+      ripple.className = 'fluid-ripple';
+
+      const diameter = Math.max(rect.width, rect.height) * 1.6;
+      ripple.style.width = `${diameter}px`;
+      ripple.style.height = `${diameter}px`;
+
+      const x = e && typeof e.clientX === 'number' ? e.clientX - rect.left : rect.width / 2;
+      const y = e && typeof e.clientY === 'number' ? e.clientY - rect.top : rect.height / 2;
+
+      ripple.style.left = `${x}px`;
+      ripple.style.top = `${y}px`;
+
+      const computedPos = window.getComputedStyle(target).position;
+      if (computedPos === 'static') {
+        target.style.position = 'relative';
+      }
+
+      target.appendChild(ripple);
+      ripple.addEventListener('animationend', () => ripple.remove(), { once: true });
+      setTimeout(() => ripple.remove(), 650);
+    } catch (err) {}
+  },
+
   // ---- Event Binding ----
   bindEvents() {
     // Sound Toggles
@@ -1357,11 +1728,27 @@ const UI = {
     const btnSound3 = document.getElementById('btn-session-sound');
     if (btnSound3) btnSound3.addEventListener('click', toggleSoundHandler);
 
-    // Global tactile click sound on interactive elements
+    // Global tactile click sound and fluid ripple on interactive elements
     document.addEventListener('click', (e) => {
-      const btn = e.target.closest('button, .btn, .folder-item, .btn-rate');
-      if (btn) {
+      const interactiveEl = e.target.closest('button, .btn, .folder-item, .btn-rate, .deck-card, .tool-btn, .badge, .tab-btn, a, .stat-pill, .control-btn, .shortcut-row');
+      if (interactiveEl) {
         SoundFX.click();
+        this.createFluidRipple(e, interactiveEl);
+      }
+    });
+
+    // Soft fluid droplet hover sound on interactive elements
+    document.addEventListener('mouseover', (e) => {
+      const interactive = e.target.closest('button, .btn, .folder-item, .btn-rate, .tool-btn, .tab-btn');
+      if (interactive && !interactive.dataset.hovered) {
+        interactive.dataset.hovered = '1';
+        SoundFX.hover();
+      }
+    });
+    document.addEventListener('mouseout', (e) => {
+      const interactive = e.target.closest('button, .btn, .folder-item, .btn-rate, .tool-btn, .tab-btn');
+      if (interactive) {
+        delete interactive.dataset.hovered;
       }
     });
 

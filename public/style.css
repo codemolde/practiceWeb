@@ -122,38 +122,49 @@ body.has-wallpaper .wallpaper-overlay {
 .aura-orb {
   position: absolute;
   border-radius: 50%;
-  filter: blur(95px);
-  opacity: 0.25;
+  filter: blur(82px);
+  opacity: 0.36;
   mix-blend-mode: screen;
   will-change: transform, opacity;
+  pointer-events: none;
 }
 
 .orb-1 {
-  width: 580px;
-  height: 580px;
-  background: radial-gradient(circle, #388bfd 0%, rgba(56, 139, 253, 0) 70%);
-  top: -120px;
-  left: -120px;
-  animation: auraFloat1 20s ease-in-out infinite alternate;
+  width: 620px;
+  height: 620px;
+  background: radial-gradient(circle, #38bdf8 0%, rgba(56, 189, 248, 0.45) 35%, rgba(56, 189, 248, 0) 70%);
+  top: -100px;
+  left: -100px;
+  animation: auraFloat1 22s ease-in-out infinite alternate;
 }
 
 .orb-2 {
-  width: 680px;
-  height: 680px;
-  background: radial-gradient(circle, #a371f7 0%, rgba(163, 113, 247, 0) 70%);
-  bottom: -160px;
-  right: -120px;
-  animation: auraFloat2 24s ease-in-out infinite alternate;
+  width: 720px;
+  height: 720px;
+  background: radial-gradient(circle, #c084fc 0%, rgba(192, 132, 252, 0.4) 38%, rgba(168, 85, 247, 0) 70%);
+  bottom: -140px;
+  right: -100px;
+  animation: auraFloat2 26s ease-in-out infinite alternate;
 }
 
 .orb-3 {
-  width: 480px;
-  height: 480px;
-  background: radial-gradient(circle, #f0883e 0%, rgba(240, 136, 62, 0) 70%);
-  top: 35%;
-  left: 45%;
-  opacity: 0.15;
-  animation: auraFloat3 28s ease-in-out infinite alternate;
+  width: 540px;
+  height: 540px;
+  background: radial-gradient(circle, #fb923c 0%, rgba(251, 146, 60, 0.35) 35%, rgba(240, 136, 62, 0) 70%);
+  top: 32%;
+  left: 42%;
+  opacity: 0.28;
+  animation: auraFloat3 30s ease-in-out infinite alternate;
+}
+
+.orb-4 {
+  width: 580px;
+  height: 580px;
+  background: radial-gradient(circle, #34d399 0%, rgba(52, 211, 153, 0.38) 35%, rgba(45, 212, 191, 0) 70%);
+  bottom: 18%;
+  left: 12%;
+  opacity: 0.32;
+  animation: auraFloat4 25s ease-in-out infinite alternate;
 }
 
 @keyframes auraFloat1 {
@@ -174,7 +185,13 @@ body.has-wallpaper .wallpaper-overlay {
   100% { transform: translate(-65%, -65%) scale(0.85); }
 }
 
-/* Particle Canvas for Micro-Bursts and Celebrations */
+@keyframes auraFloat4 {
+  0% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(-60px, 75px) scale(1.18); }
+  100% { transform: translate(45px, -45px) scale(0.92); }
+}
+
+/* Particle Canvas for Micro-Bursts, Luminous Bubbles, and Celebrations */
 .particle-canvas {
   position: fixed;
   inset: 0;
@@ -232,16 +249,22 @@ body.has-wallpaper .wallpaper-overlay {
   outline: none;
   position: relative;
   overflow: hidden;
-  transition: var(--transition-smooth);
+  transition: transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1),
+              box-shadow 0.2s ease,
+              background 0.2s ease,
+              border-color 0.2s ease,
+              color 0.15s ease;
+  will-change: transform;
 }
 
 .btn::after {
   content: '';
   position: absolute;
   inset: 0;
-  background: rgba(255, 255, 255, 0.1);
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0) 70%);
   opacity: 0;
-  transition: opacity 0.2s ease;
+  transition: opacity 0.25s ease;
+  pointer-events: none;
 }
 
 .btn:hover::after {
@@ -249,12 +272,41 @@ body.has-wallpaper .wallpaper-overlay {
 }
 
 .btn:hover {
-  transform: translateY(-2px);
+  transform: translateY(-2.5px) scale(1.02);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
 }
 
 .btn:active {
-  transform: translateY(1px) scale(0.96);
-  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.4);
+  transform: translateY(1.5px) scale(0.94, 0.96) !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5), inset 0 2px 6px rgba(0, 0, 0, 0.4) !important;
+  transition: transform 0.06s cubic-bezier(0.2, 0.8, 0.2, 1) !important;
+}
+
+/* Fluid Expanding Ripple on Click */
+.fluid-ripple {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  transform: translate(-50%, -50%) scale(0);
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.5) 0%, rgba(56, 189, 248, 0.35) 45%, rgba(192, 132, 252, 0.2) 70%, rgba(255, 255, 255, 0) 100%);
+  border: 1.5px solid rgba(255, 255, 255, 0.7);
+  box-shadow: 0 0 16px rgba(56, 189, 248, 0.6), inset 0 0 8px rgba(255, 255, 255, 0.4);
+  animation: fluidRippleExpand 0.58s cubic-bezier(0.12, 0.82, 0.28, 1) forwards;
+  z-index: 50;
+}
+
+@keyframes fluidRippleExpand {
+  0% {
+    transform: translate(-50%, -50%) scale(0);
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.85;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(3.6);
+    opacity: 0;
+  }
 }
 
 .btn-hotkey-press {
