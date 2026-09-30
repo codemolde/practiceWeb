@@ -18,6 +18,14 @@
   <div id="wallpaper-bg" class="wallpaper-bg"></div>
   <div id="wallpaper-overlay" class="wallpaper-overlay"></div>
 
+  <!-- Ambient Living Aura & Particle Canvas -->
+  <div id="ambient-aura" class="ambient-aura">
+    <div class="aura-orb orb-1"></div>
+    <div class="aura-orb orb-2"></div>
+    <div class="aura-orb orb-3"></div>
+  </div>
+  <canvas id="particle-canvas" class="particle-canvas"></canvas>
+
   <!-- Toast Notification HUD -->
   <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
@@ -38,6 +46,9 @@
         </div>
 
         <div class="header-actions">
+          <button id="btn-toggle-sound" class="btn btn-secondary" title="Tactile Sound FX (Click to mute/unmute)">
+            <span class="btn-icon" id="sound-icon">🔊</span> <span id="sound-text">Sound</span>
+          </button>
           <button id="btn-open-wallpaper" class="btn btn-secondary" title="Customize Background Wallpaper">
             <span class="btn-icon">🖼️</span> Wallpaper
           </button>
@@ -97,6 +108,9 @@
           <p id="deck-detail-path" class="deck-path" title="Folder path"></p>
         </div>
         <div class="deck-header-actions">
+          <button id="btn-detail-sound" class="btn btn-ghost" title="Tactile Sound FX (Click to mute/unmute)">
+            <span class="btn-icon" id="detail-sound-icon">🔊</span> Sound
+          </button>
           <button id="btn-detail-wallpaper" class="btn btn-ghost" title="Customize Wallpaper">🖼️ Wallpaper</button>
           <button id="btn-edit-deck" class="btn btn-ghost">Edit</button>
           <button id="btn-delete-deck" class="btn btn-danger-ghost">Delete</button>
@@ -250,6 +264,9 @@
           <span id="session-mode-label" class="session-mode-badge"></span>
         </div>
         <div class="session-right-controls">
+          <button id="btn-session-sound" class="btn btn-ghost btn-small" title="Toggle Sound [U]">
+            <span id="session-sound-icon">🔊</span>
+          </button>
           <div class="session-counter">
             <span id="session-progress">#1</span>
           </div>
@@ -478,6 +495,10 @@
           <div class="shortcut-item">
             <div class="shortcut-keys"><kbd>F</kbd></div>
             <div class="shortcut-desc">Toggle Zen Fullscreen Mode</div>
+          </div>
+          <div class="shortcut-item">
+            <div class="shortcut-keys"><kbd>U</kbd></div>
+            <div class="shortcut-desc">Toggle tactile sound FX (Mute / Unmute)</div>
           </div>
           <div class="shortcut-item">
             <div class="shortcut-keys"><kbd>?</kbd></div>

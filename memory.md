@@ -62,38 +62,44 @@
 
 ## 📋 Feature Tracking & Roadmap
 
-### Baseline Implemented
+### Features Implemented
 - [x] Git baseline repository initialized
-- [x] Deck creation, editing, deletion with folder browser
+- [x] Dedicated `memory.md` preserving philosophy and system architecture
+- [x] Deck creation, editing, deletion with interactive folder browser
 - [x] Spaced repetition scheduler (SM-2 variant: Hard / Medium / Easy)
 - [x] GitHub-style activity heatmap & streak stats
 - [x] Daily limits (New cards / Review cards)
 - [x] Basic timer with blur timeout
-
-### Current Upgrade (In Progress)
-- [x] Dedicated `memory.md` preserving philosophy and system architecture
-- [ ] Fluid UI Animations & Micro-Interactions:
-  - View transitions (fade/slide)
-  - Card hover lifts and glowing borders
-  - Timer bar animations with pulse effects
-  - Silky image transitions and blur reveal
-  - Toast HUD notifications for all hotkey actions
-- [ ] **User-Custom Background Wallpaper System**:
-  - Add personal wallpaper images directly from local computer (upload or file drop)
-  - Real-time Blur slider (0px to 30px) for non-distracting visual depth
-  - Real-time Dimming / Overlay opacity slider (10% to 90%)
+- [x] **User-Custom Background Wallpaper System**:
+  - Add personal wallpaper images directly from local computer (file upload or drag & drop)
+  - Image URL loading support
+  - Real-time live Blur slider (0px to 30px) for non-distracting visual depth
+  - Real-time live Dimming / Overlay opacity slider (10% to 90%)
   - Remove / Reset to default dark studio slate
-  - Persistent in IndexedDB for fast, reliable local storage
-- [ ] Artist Quality of Life (QoL) Suite:
+  - Persistent in IndexedDB for fast, reliable local storage without size limits
+- [x] **Artist Quality of Life (QoL) Suite**:
   - Grayscale / Value Check mode (`G`)
-  - Grid Overlay for proportions (`O`)
+  - Proportion Grid Overlay (`O`)
+  - Color Inversion for silhouette & negative space check (`I`)
   - Smooth Zoom & Drag-to-Pan (Mouse wheel + mouse drag)
-  - Color Inversion for silhouette study (`I`)
-  - Distraction-Free Fullscreen Mode (`F`)
+  - Horizontal Flip / Mirroring (`M`)
+  - 90° Image Rotation (`R`)
+  - Distraction-Free Zen Fullscreen Mode (`F`)
   - Keyboard shortcuts cheat sheet modal (`?`)
-  - Deck search and filter bar
-  - Session complete summary modal with stats breakdown
+  - Quick deck search and sort bar
+  - Session complete celebration & summary modal
   - JSON Data Export / Import backup
+- [x] **Living Atmosphere & Tactile Interactions**:
+  - Multi-layer drifting ambient aura orbs with soft radial gradients
+  - Interactive stardust / studio dust motes on Canvas with subtle mouse parallax
+  - Tactile spark micro-bursts on element clicks and hotkey presses
+  - Confetti & celebration fireworks shower on session completion and Easy ratings
+  - Dynamic 3D card tilt with specular spotlight mouse glare
+  - Synthesized Web Audio API sound FX (soft button clicks, card hover ticks, melodic rating tones, timer warnings, singing bowl gong, celebration fanfare)
+  - Dedicated sound toggle (`U` hotkey, header buttons) with persistent mute state
+  - Living breathing streak flame animation (`🔥`)
+  - Dynamic timer pulse (warning amber glow <= 10s, pulsing crimson danger <= 5s with audio ticks)
+  - Physical button depression and on-screen hotkey active state feedback
 
 ---
 

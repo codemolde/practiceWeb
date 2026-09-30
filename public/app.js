@@ -50,6 +50,499 @@ const Storage = {
   }
 };
 
+// ==================== TACTILE SOUND FX (Web Audio API) ====================
+const SoundFX = {
+  ctx: null,
+  enabled: true,
+
+  init() {
+    const saved = localStorage.getItem('artpractice_sound_enabled');
+    this.enabled = saved !== null ? saved === 'true' : true;
+    this.updateUI();
+
+    // Unlock Web Audio context on first user interaction
+    const unlockAudio = () => {
+      if (this.ctx && this.ctx.state === 'suspended') {
+        this.ctx.resume();
+      }
+      window.removeEventListener('click', unlockAudio);
+      window.removeEventListener('keydown', unlockAudio);
+    };
+    window.addEventListener('click', unlockAudio);
+    window.addEventListener('keydown', unlockAudio);
+  },
+
+  _getCtx() {
+    if (!this.ctx) {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) {
+        this.ctx = new AudioCtx();
+      }
+    }
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume();
+    }
+    return this.ctx;
+  },
+
+  toggle() {
+    this.enabled = !this.enabled;
+    localStorage.setItem('artpractice_sound_enabled', String(this.enabled));
+    this.updateUI();
+    if (this.enabled) {
+      this.chirp();
+    }
+    return this.enabled;
+  },
+
+  updateUI() {
+    const icon = this.enabled ? '🔊' : '🔇';
+    const text = this.enabled ? 'Sound' : 'Muted';
+    const soundIconEl = document.getElementById('sound-icon');
+    const soundTextEl = document.getElementById('sound-text');
+    if (soundIconEl) soundIconEl.textContent = icon;
+    if (soundTextEl) soundTextEl.textContent = text;
+
+    const detailIconEl = document.getElementById('detail-sound-icon');
+    if (detailIconEl) detailIconEl.textContent = icon;
+
+    const sessionIconEl = document.getElementById('session-sound-icon');
+    if (sessionIconEl) sessionIconEl.textContent = icon;
+
+    const btn1 = document.getElementById('btn-toggle-sound');
+    if (btn1) btn1.classList.toggle('btn-muted', !this.enabled);
+    const btn2 = document.getElementById('btn-detail-sound');
+    if (btn2) btn2.classList.toggle('btn-muted', !this.enabled);
+    const btn3 = document.getElementById('btn-session-sound');
+    if (btn3) btn3.classList.toggle('btn-muted', !this.enabled);
+  },
+
+  // Soft tactile click for buttons
+  click() {
+    if (!this.enabled) return;
+    try {
+      const ctx = this._getCtx();
+      if (!ctx) return;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const filter = ctx.createBiquadFilter();
+
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(1400, ctx.currentTime);
+
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(320, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(80, ctx.currentTime + 0.035);
+
+      gain.gain.setValueAtTime(0.07, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.035);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.04);
+    } catch (e) {}
+  },
+
+  // Subtle tick on hovering cards
+  hover() {
+    if (!this.enabled) return;
+    try {
+      const ctx = this._getCtx();
+      if (!ctx) return;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(540, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(380, ctx.currentTime + 0.012);
+
+      gain.gain.setValueAtTime(0.015, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.012);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.015);
+    } catch (e) {}
+  },
+
+  // Card rating sounds (Hard, Medium, Easy)
+  rate(diff) {
+    if (!this.enabled) return;
+    try {
+      const ctx = this._getCtx();
+      if (!ctx) return;
+
+      if (diff === 'hard') {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(200, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(120, ctx.currentTime + 0.2);
+
+        gain.gain.setValueAtTime(0.12, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.22);
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.23);
+      } else if (diff === 'medium') {
+        [440, 554.37].forEach((f, idx) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          const t = ctx.currentTime + idx * 0.05;
+          osc.frequency.setValueAtTime(f, t);
+
+          gain.gain.setValueAtTime(0.001, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.1, t + 0.01);
+          gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(t);
+          osc.stop(t + 0.38);
+        });
+      } else if (diff === 'easy') {
+        [523.25, 659.25, 783.99, 1046.5].forEach((f, idx) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          const t = ctx.currentTime + idx * 0.06;
+          osc.frequency.setValueAtTime(f, t);
+
+          gain.gain.setValueAtTime(0.001, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.12, t + 0.015);
+          gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.55);
+
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(t);
+          osc.stop(t + 0.58);
+        });
+      }
+    } catch (e) {}
+  },
+
+  // Soft organic tick when timer <= 5s
+  timerTick() {
+    if (!this.enabled) return;
+    try {
+      const ctx = this._getCtx();
+      if (!ctx) return;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(580, ctx.currentTime + 0.03);
+
+      gain.gain.setValueAtTime(0.05, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.035);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.04);
+    } catch (e) {}
+  },
+
+  // Zen singing bowl when timer runs out
+  timerAlert() {
+    if (!this.enabled) return;
+    try {
+      const ctx = this._getCtx();
+      if (!ctx) return;
+      [528, 660, 792].forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        const start = ctx.currentTime + idx * 0.07;
+        osc.frequency.setValueAtTime(freq, start);
+
+        gain.gain.setValueAtTime(0.001, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.16, start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 1.4);
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(start);
+        osc.stop(start + 1.5);
+      });
+    } catch (e) {}
+  },
+
+  // Session complete victory fanfare
+  sessionComplete() {
+    if (!this.enabled) return;
+    try {
+      const ctx = this._getCtx();
+      if (!ctx) return;
+      const notes = [261.63, 329.63, 392.00, 523.25, 659.25, 783.99]; // C4, E4, G4, C5, E5, G5
+      notes.forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = idx >= 3 ? 'sine' : 'triangle';
+        const start = ctx.currentTime + idx * 0.08;
+        osc.frequency.setValueAtTime(freq, start);
+
+        gain.gain.setValueAtTime(0.001, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.12, start + 0.025);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 1.1);
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(start);
+        osc.stop(start + 1.2);
+      });
+    } catch (e) {}
+  },
+
+  // Snappy pop for toolbar items
+  toolToggle() {
+    if (!this.enabled) return;
+    try {
+      const ctx = this._getCtx();
+      if (!ctx) return;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(620, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(940, ctx.currentTime + 0.035);
+
+      gain.gain.setValueAtTime(0.05, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.04);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.045);
+    } catch (e) {}
+  },
+
+  // Chirp when unmuting
+  chirp() {
+    try {
+      const ctx = this._getCtx();
+      if (!ctx) return;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(520, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(780, ctx.currentTime + 0.06);
+
+      gain.gain.setValueAtTime(0.07, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.07);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.08);
+    } catch (e) {}
+  }
+};
+
+// ==================== LIVING AMBIENT CANVAS & PARTICLES ====================
+const ParticleFX = {
+  canvas: null,
+  ctx: null,
+  width: 0,
+  height: 0,
+  particles: [],
+  bursts: [],
+  mouseX: 0,
+  mouseY: 0,
+  targetMouseX: 0,
+  targetMouseY: 0,
+  animId: null,
+  isPaused: false,
+
+  init() {
+    this.canvas = document.getElementById('particle-canvas');
+    if (!this.canvas) return;
+    this.ctx = this.canvas.getContext('2d');
+    this.resize();
+
+    window.addEventListener('resize', () => this.resize());
+    window.addEventListener('mousemove', (e) => {
+      this.targetMouseX = (e.clientX / (this.width || 1) - 0.5) * 50;
+      this.targetMouseY = (e.clientY / (this.height || 1) - 0.5) * 50;
+    });
+
+    // 40 ambient drifting stardust / light motes
+    const count = Math.min(45, Math.floor(window.innerWidth / 35));
+    for (let i = 0; i < count; i++) {
+      this.particles.push(this._createMote());
+    }
+
+    // Page-wide click micro-bursts (tactile spark response)
+    document.addEventListener('click', (e) => {
+      if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+      this.burst(e.clientX, e.clientY, 8);
+    });
+
+    document.addEventListener('visibilitychange', () => {
+      this.isPaused = document.hidden;
+      if (!this.isPaused && !this.animId) {
+        this.loop();
+      }
+    });
+
+    this.loop();
+  },
+
+  resize() {
+    if (!this.canvas) return;
+    this.width = window.innerWidth;
+    this.height = window.innerHeight;
+    this.canvas.width = this.width * (window.devicePixelRatio || 1);
+    this.canvas.height = this.height * (window.devicePixelRatio || 1);
+    this.ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+  },
+
+  _createMote() {
+    const colors = [
+      'rgba(88, 166, 255, ',   // blue
+      'rgba(163, 113, 247, ',  // purple
+      'rgba(240, 136, 62, ',   // amber
+      'rgba(57, 211, 83, ',    // green
+      'rgba(255, 255, 255, '   // white
+    ];
+    return {
+      x: Math.random() * (this.width || 800),
+      y: Math.random() * (this.height || 600),
+      radius: Math.random() * 2.2 + 0.8,
+      colorPrefix: colors[Math.floor(Math.random() * colors.length)],
+      alpha: Math.random() * 0.32 + 0.12,
+      baseAlpha: Math.random() * 0.32 + 0.12,
+      vx: (Math.random() - 0.5) * 0.35,
+      vy: -Math.random() * 0.45 - 0.12,
+      sineOffset: Math.random() * Math.PI * 2,
+      sineSpeed: Math.random() * 0.02 + 0.01,
+      depth: Math.random() * 0.8 + 0.4
+    };
+  },
+
+  burst(x, y, count = 10, customColors = null) {
+    const palette = customColors || [
+      '#58a6ff', '#a371f7', '#f0883e', '#39d353', '#ffd166', '#ffffff'
+    ];
+    for (let i = 0; i < count; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = Math.random() * 3.6 + 1.2;
+      this.bursts.push({
+        x,
+        y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        color: palette[Math.floor(Math.random() * palette.length)],
+        radius: Math.random() * 2.4 + 1.2,
+        life: 1.0,
+        decay: Math.random() * 0.035 + 0.025,
+        gravity: 0.06
+      });
+    }
+  },
+
+  celebrate(originX = null, originY = null) {
+    const x = originX !== null ? originX : (this.width || 800) / 2;
+    const y = originY !== null ? originY : (this.height || 600) * 0.42;
+    const palette = ['#388bfd', '#a371f7', '#39d353', '#f0883e', '#e3b341', '#f85149', '#ffffff'];
+
+    for (let i = 0; i < 75; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = Math.random() * 7.5 + 2.5;
+      this.bursts.push({
+        x: x + (Math.random() - 0.5) * 40,
+        y: y + (Math.random() - 0.5) * 20,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 2.5,
+        color: palette[Math.floor(Math.random() * palette.length)],
+        radius: Math.random() * 3.4 + 1.5,
+        life: 1.0,
+        decay: Math.random() * 0.018 + 0.012,
+        gravity: 0.16,
+        isConfetti: Math.random() > 0.4,
+        rotation: Math.random() * Math.PI * 2,
+        rotSpeed: (Math.random() - 0.5) * 0.2
+      });
+    }
+  },
+
+  loop() {
+    if (this.isPaused) {
+      this.animId = null;
+      return;
+    }
+
+    this.mouseX += (this.targetMouseX - this.mouseX) * 0.05;
+    this.mouseY += (this.targetMouseY - this.mouseY) * 0.05;
+
+    this.ctx.clearRect(0, 0, this.width, this.height);
+
+    // 1. Ambient floating particles
+    for (let i = 0; i < this.particles.length; i++) {
+      const p = this.particles[i];
+      p.sineOffset += p.sineSpeed;
+      p.x += p.vx + Math.sin(p.sineOffset) * 0.25;
+      p.y += p.vy;
+
+      if (p.y < -10) {
+        p.y = this.height + 10;
+        p.x = Math.random() * this.width;
+      }
+      if (p.x < -10) p.x = this.width + 10;
+      if (p.x > this.width + 10) p.x = -10;
+
+      const currentAlpha = p.baseAlpha + Math.sin(p.sineOffset) * 0.08;
+      const posX = p.x + this.mouseX * p.depth;
+      const posY = p.y + this.mouseY * p.depth;
+
+      this.ctx.beginPath();
+      this.ctx.arc(posX, posY, p.radius, 0, Math.PI * 2);
+      this.ctx.fillStyle = `${p.colorPrefix}${Math.max(0.04, currentAlpha)})`;
+      this.ctx.fill();
+    }
+
+    // 2. Click micro-bursts / celebration sparks
+    for (let i = this.bursts.length - 1; i >= 0; i--) {
+      const b = this.bursts[i];
+      b.x += b.vx;
+      b.y += b.vy;
+      b.vy += b.gravity;
+      b.vx *= 0.98;
+      b.life -= b.decay;
+
+      if (b.life <= 0) {
+        this.bursts.splice(i, 1);
+        continue;
+      }
+
+      this.ctx.save();
+      this.ctx.globalAlpha = Math.max(0, b.life);
+      this.ctx.fillStyle = b.color;
+
+      if (b.isConfetti) {
+        b.rotation += b.rotSpeed;
+        this.ctx.translate(b.x, b.y);
+        this.ctx.rotate(b.rotation);
+        this.ctx.fillRect(-b.radius, -b.radius * 0.6, b.radius * 2, b.radius * 1.2);
+      } else {
+        this.ctx.beginPath();
+        this.ctx.arc(b.x, b.y, b.radius * b.life, 0, Math.PI * 2);
+        this.ctx.fill();
+      }
+      this.ctx.restore();
+    }
+
+    this.animId = requestAnimationFrame(() => this.loop());
+  }
+};
+
 // ==================== WALLPAPER MANAGER (IndexedDB) ====================
 // Uses IndexedDB for large custom wallpaper images so users can set 4K/high-res images without 5MB localStorage limits
 const WallpaperManager = {
@@ -482,11 +975,14 @@ const TimerManager = {
     this.intervalId = setInterval(() => {
       if (!this.isPaused) {
         this.remaining--;
+        if (this.remaining <= 5 && this.remaining > 0) {
+          SoundFX.timerTick();
+        }
         if (this.onTick) this.onTick(this.remaining, this.duration);
 
         if (this.remaining <= 0) {
           this.stop();
-          this._playSingingChime();
+          SoundFX.timerAlert();
           if (this.onEnd) this.onEnd();
         }
       }
@@ -656,6 +1152,7 @@ const ArtistToolbox = {
   },
 
   toggleGrayscale() {
+    SoundFX.toolToggle();
     this.grayscale = !this.grayscale;
     const container = document.getElementById('session-image-container');
     const btn = document.getElementById('btn-art-grayscale');
@@ -671,6 +1168,7 @@ const ArtistToolbox = {
   },
 
   toggleGrid() {
+    SoundFX.toolToggle();
     this.grid = !this.grid;
     const overlay = document.getElementById('image-grid-overlay');
     const btn = document.getElementById('btn-art-grid');
@@ -686,6 +1184,7 @@ const ArtistToolbox = {
   },
 
   toggleInvert() {
+    SoundFX.toolToggle();
     this.invert = !this.invert;
     const container = document.getElementById('session-image-container');
     const btn = document.getElementById('btn-art-invert');
@@ -701,12 +1200,14 @@ const ArtistToolbox = {
   },
 
   flipHorizontal() {
+    SoundFX.toolToggle();
     this.flipX *= -1;
     this.applyTransform();
     UI.showToast(this.flipX === -1 ? 'Flipped Horizontal' : 'Normal Orientation', '⇄');
   },
 
   rotate90() {
+    SoundFX.toolToggle();
     this.rotate = (this.rotate + 90) % 360;
     this.applyTransform();
     UI.showToast(`Rotated ${this.rotate}°`, '⟳');
@@ -724,6 +1225,7 @@ const ArtistToolbox = {
   },
 
   resetZoomPan() {
+    SoundFX.toolToggle();
     this.zoom = 1;
     this.panX = 0;
     this.panY = 0;
@@ -786,6 +1288,8 @@ const UI = {
   isZenMode: false,
 
   async init() {
+    SoundFX.init();
+    ParticleFX.init();
     DeckManager.init();
     CardManager.init();
     ReviewHistory.init();
@@ -814,6 +1318,26 @@ const UI = {
 
   // ---- Event Binding ----
   bindEvents() {
+    // Sound Toggles
+    const toggleSoundHandler = () => {
+      const enabled = SoundFX.toggle();
+      this.showToast(enabled ? 'Tactile Sound On' : 'Sound Muted', enabled ? '🔊' : '🔇');
+    };
+    const btnSound1 = document.getElementById('btn-toggle-sound');
+    if (btnSound1) btnSound1.addEventListener('click', toggleSoundHandler);
+    const btnSound2 = document.getElementById('btn-detail-sound');
+    if (btnSound2) btnSound2.addEventListener('click', toggleSoundHandler);
+    const btnSound3 = document.getElementById('btn-session-sound');
+    if (btnSound3) btnSound3.addEventListener('click', toggleSoundHandler);
+
+    // Global tactile click sound on interactive elements
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('button, .btn, .folder-item, .btn-rate');
+      if (btn) {
+        SoundFX.click();
+      }
+    });
+
     // Header & Deck List
     document.getElementById('btn-new-deck').addEventListener('click', () => this.openDeckModal());
     document.getElementById('btn-empty-new-deck').addEventListener('click', () => this.openDeckModal());
@@ -1122,6 +1646,17 @@ const UI = {
     document.getElementById('modal-shortcuts').classList.add('hidden');
   },
 
+  triggerHotkeyFeedback(elementId) {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+    el.classList.add('btn-hotkey-press');
+    setTimeout(() => el.classList.remove('btn-hotkey-press'), 180);
+    const rect = el.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      ParticleFX.burst(rect.left + rect.width / 2, rect.top + rect.height / 2, 6);
+    }
+  },
+
   // ---- Keyboard Shortcuts ----
   handleKeyboard(e) {
     // If typing in an input/textarea, ignore hotkeys
@@ -1129,7 +1664,14 @@ const UI = {
       return;
     }
 
-    // Help modal toggle
+    // Sound toggle shortcut (U)
+    if (e.key.toLowerCase() === 'u') {
+      const enabled = SoundFX.toggle();
+      this.showToast(enabled ? 'Tactile Sound On' : 'Sound Muted', enabled ? '🔊' : '🔇');
+      return;
+    }
+
+    // Help modal toggle (?)
     if (e.key === '?' || (e.shiftKey && e.key === '/')) {
       e.preventDefault();
       const modal = document.getElementById('modal-shortcuts');
@@ -1150,48 +1692,64 @@ const UI = {
 
     switch (e.key.toLowerCase()) {
       case '1':
+        this.triggerHotkeyFeedback('btn-rate-hard');
         this.rateCurrentImage('hard');
         break;
       case '2':
+        this.triggerHotkeyFeedback('btn-rate-medium');
         this.rateCurrentImage('medium');
         break;
       case '3':
+        this.triggerHotkeyFeedback('btn-rate-easy');
         this.rateCurrentImage('easy');
         break;
       case 's':
-        if (!this.imageBlurred) this.showNextImage();
+        if (!this.imageBlurred) {
+          this.triggerHotkeyFeedback('btn-skip');
+          this.showNextImage();
+        }
         break;
       case ' ':
         e.preventDefault();
+        this.triggerHotkeyFeedback('btn-timer-pause');
         this.toggleTimerPause();
         break;
       case 'g':
+        this.triggerHotkeyFeedback('btn-art-grayscale');
         ArtistToolbox.toggleGrayscale();
         break;
       case 'o':
+        this.triggerHotkeyFeedback('btn-art-grid');
         ArtistToolbox.toggleGrid();
         break;
       case 'i':
+        this.triggerHotkeyFeedback('btn-art-invert');
         ArtistToolbox.toggleInvert();
         break;
       case 'm':
+        this.triggerHotkeyFeedback('btn-img-flip');
         ArtistToolbox.flipHorizontal();
         break;
       case 'r':
+        this.triggerHotkeyFeedback('btn-img-rotate');
         ArtistToolbox.rotate90();
         break;
       case '+':
       case '=':
+        this.triggerHotkeyFeedback('btn-img-zoom-in');
         ArtistToolbox.adjustZoom(0.25);
         break;
       case '-':
       case '_':
+        this.triggerHotkeyFeedback('btn-img-zoom-out');
         ArtistToolbox.adjustZoom(-0.25);
         break;
       case '0':
+        this.triggerHotkeyFeedback('btn-img-zoom-reset');
         ArtistToolbox.resetZoomPan();
         break;
       case 'f':
+        this.triggerHotkeyFeedback('btn-session-zen');
         this.toggleZenMode();
         break;
     }
@@ -1283,9 +1841,37 @@ const UI = {
     }).join('');
 
     listEl.querySelectorAll('.deck-card').forEach(card => {
+      this.applyCardTilt(card);
       card.addEventListener('click', () => {
         this.openDeckDetail(card.dataset.deckId);
       });
+    });
+  },
+
+  applyCardTilt(card) {
+    card.addEventListener('mousemove', (e) => {
+      const rect = card.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const centerX = rect.width / 2;
+      const centerY = rect.height / 2;
+
+      const rotateX = ((y - centerY) / centerY) * -6.5;
+      const rotateY = ((x - centerX) / centerX) * 6.5;
+
+      card.style.transform = `perspective(800px) rotateX(${rotateX.toFixed(2)}deg) rotateY(${rotateY.toFixed(2)}deg) translateY(-4px) scale3d(1.02, 1.02, 1.02)`;
+      card.style.setProperty('--mouse-x', `${x}px`);
+      card.style.setProperty('--mouse-y', `${y}px`);
+    });
+
+    card.addEventListener('mouseenter', () => {
+      SoundFX.hover();
+      card.style.transition = 'transform 0.1s ease-out, box-shadow 0.2s ease, border-color 0.2s ease';
+    });
+
+    card.addEventListener('mouseleave', () => {
+      card.style.transition = 'transform 0.5s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s ease, border-color 0.3s ease';
+      card.style.transform = 'perspective(800px) rotateX(0deg) rotateY(0deg) translateY(0) scale3d(1, 1, 1)';
     });
   },
 
@@ -1532,7 +2118,7 @@ const UI = {
     }
 
     document.getElementById('stat-longest-streak').textContent = `${longestStreak} days`;
-    document.getElementById('stat-current-streak').textContent = `${currentStreak} days 🔥`;
+    document.getElementById('stat-current-streak').innerHTML = `${currentStreak} days <span class="streak-flame">🔥</span>`;
   },
 
   renderTodaysReviewedCount() {
@@ -1661,7 +2247,7 @@ const UI = {
       checkDate.setDate(checkDate.getDate() - 1);
     }
 
-    document.getElementById('summary-streak-val').textContent = `${currentStreak} days 🔥`;
+    document.getElementById('summary-streak-val').innerHTML = `${currentStreak} days <span class="streak-flame">🔥</span>`;
 
     document.getElementById('summary-breakdown').innerHTML = `
       <span style="color: var(--easy-color)">Easy: ${stats.easy}</span>
@@ -1670,6 +2256,8 @@ const UI = {
     `;
 
     document.getElementById('modal-session-summary').classList.remove('hidden');
+    SoundFX.sessionComplete();
+    ParticleFX.celebrate();
   },
 
   showBlurOverlay() {
@@ -1699,6 +2287,17 @@ const UI = {
 
   rateCurrentImage(difficulty) {
     if (!SessionManager.currentImage) return;
+
+    SoundFX.rate(difficulty);
+    const btn = document.getElementById(`btn-rate-${difficulty}`);
+    if (btn) {
+      const rect = btn.getBoundingClientRect();
+      if (difficulty === 'easy') {
+        ParticleFX.burst(rect.left + rect.width / 2, rect.top + rect.height / 2, 16, ['#39d353', '#56d364', '#ffffff', '#ffd166']);
+      } else {
+        ParticleFX.burst(rect.left + rect.width / 2, rect.top + rect.height / 2, 8);
+      }
+    }
 
     const image = SessionManager.currentImage;
     CardManager.rateCard(
@@ -1769,18 +2368,26 @@ const UI = {
       (remaining, total) => {
         const pct = (remaining / total) * 100;
         const bar = document.getElementById('timer-bar');
+        const text = document.getElementById('timer-text');
         bar.style.width = pct + '%';
         bar.className = 'timer-bar';
-        if (pct < 20) bar.classList.add('danger');
-        else if (pct < 40) bar.classList.add('warning');
+        text.className = 'timer-text';
+
+        if (remaining <= 5 || pct < 15) {
+          bar.classList.add('danger');
+          text.classList.add('danger');
+        } else if (remaining <= 10 || pct < 35) {
+          bar.classList.add('warning');
+        }
 
         const mins = Math.floor(remaining / 60);
         const secs = remaining % 60;
-        document.getElementById('timer-text').textContent =
-          `${mins}:${secs.toString().padStart(2, '0')}`;
+        text.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
       },
       () => {
-        document.getElementById('timer-text').textContent = '0:00';
+        const text = document.getElementById('timer-text');
+        text.className = 'timer-text';
+        text.textContent = '0:00';
         document.getElementById('timer-bar').style.width = '0%';
         this.showBlurOverlay();
       }

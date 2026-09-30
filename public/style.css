@@ -76,7 +76,7 @@ html, body {
 .wallpaper-bg {
   position: fixed;
   inset: 0;
-  z-index: -2;
+  z-index: -3;
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
@@ -89,11 +89,83 @@ html, body {
 .wallpaper-overlay {
   position: fixed;
   inset: 0;
-  z-index: -1;
+  z-index: -2;
   background: var(--wallpaper-overlay-dim);
   backdrop-filter: blur(2px);
   -webkit-backdrop-filter: blur(2px);
   transition: background 0.3s ease;
+  pointer-events: none;
+}
+
+/* ==================== Living Ambient Aura ==================== */
+.ambient-aura {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.aura-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(95px);
+  opacity: 0.25;
+  mix-blend-mode: screen;
+  will-change: transform, opacity;
+}
+
+.orb-1 {
+  width: 580px;
+  height: 580px;
+  background: radial-gradient(circle, #388bfd 0%, rgba(56, 139, 253, 0) 70%);
+  top: -120px;
+  left: -120px;
+  animation: auraFloat1 20s ease-in-out infinite alternate;
+}
+
+.orb-2 {
+  width: 680px;
+  height: 680px;
+  background: radial-gradient(circle, #a371f7 0%, rgba(163, 113, 247, 0) 70%);
+  bottom: -160px;
+  right: -120px;
+  animation: auraFloat2 24s ease-in-out infinite alternate;
+}
+
+.orb-3 {
+  width: 480px;
+  height: 480px;
+  background: radial-gradient(circle, #f0883e 0%, rgba(240, 136, 62, 0) 70%);
+  top: 35%;
+  left: 45%;
+  opacity: 0.15;
+  animation: auraFloat3 28s ease-in-out infinite alternate;
+}
+
+@keyframes auraFloat1 {
+  0% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(90px, 70px) scale(1.15); }
+  100% { transform: translate(35px, 130px) scale(0.95); }
+}
+
+@keyframes auraFloat2 {
+  0% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(-100px, -80px) scale(1.1); }
+  100% { transform: translate(-45px, -120px) scale(0.92); }
+}
+
+@keyframes auraFloat3 {
+  0% { transform: translate(-50%, -50%) scale(1); }
+  50% { transform: translate(-25%, -35%) scale(1.22); }
+  100% { transform: translate(-65%, -65%) scale(0.85); }
+}
+
+/* Particle Canvas for Micro-Bursts and Celebrations */
+.particle-canvas {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
   pointer-events: none;
 }
 
@@ -166,7 +238,20 @@ html, body {
 }
 
 .btn:active {
-  transform: translateY(0) scale(0.98);
+  transform: translateY(1px) scale(0.96);
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.4);
+}
+
+.btn-hotkey-press {
+  transform: translateY(2px) scale(0.93) !important;
+  box-shadow: 0 0 18px var(--accent-glow), inset 0 2px 6px rgba(0, 0, 0, 0.5) !important;
+  border-color: var(--accent) !important;
+  transition: transform 0.08s ease, box-shadow 0.08s ease !important;
+}
+
+.btn.btn-muted {
+  opacity: 0.65;
+  border-color: rgba(255, 255, 255, 0.08);
 }
 
 .btn-primary {
@@ -451,6 +536,17 @@ kbd {
   background: linear-gradient(90deg, #388bfd, #a371f7);
   opacity: 0;
   transition: opacity 0.25s ease;
+}
+
+.deck-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle 260px at var(--mouse-x, 50%) var(--mouse-y, 50%), rgba(255, 255, 255, 0.08), transparent 75%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+  border-radius: inherit;
 }
 
 .deck-card:hover {
@@ -952,6 +1048,21 @@ kbd {
   font-family: var(--font-mono);
 }
 
+/* Living Animated Streak Flame */
+.streak-flame {
+  display: inline-block;
+  animation: flameFlicker 1.8s ease-in-out infinite alternate;
+  transform-origin: bottom center;
+  filter: drop-shadow(0 0 8px rgba(240, 136, 62, 0.7));
+  will-change: transform, filter;
+}
+
+@keyframes flameFlicker {
+  0% { transform: scale(1) rotate(-3deg); filter: drop-shadow(0 0 6px rgba(240, 136, 62, 0.5)); }
+  50% { transform: scale(1.22) rotate(4deg) translateY(-2px); filter: drop-shadow(0 0 14px rgba(248, 81, 73, 0.9)); }
+  100% { transform: scale(1.06) rotate(-2deg); filter: drop-shadow(0 0 8px rgba(240, 136, 62, 0.6)); }
+}
+
 /* ==================== Session View ==================== */
 .session-header {
   display: flex;
@@ -1039,16 +1150,33 @@ kbd {
 
 .timer-bar.warning {
   background: linear-gradient(90deg, #d29922, #e3b341);
+  animation: pulseWarning 1.2s infinite alternate;
+}
+
+@keyframes pulseWarning {
+  0% { box-shadow: 0 0 6px rgba(227, 179, 65, 0.3); }
+  100% { box-shadow: 0 0 16px rgba(227, 179, 65, 0.85); }
 }
 
 .timer-bar.danger {
   background: linear-gradient(90deg, #da3633, #f85149);
-  animation: pulseDanger 1s infinite alternate;
+  animation: pulseDanger 0.6s infinite alternate;
 }
 
 @keyframes pulseDanger {
-  0% { box-shadow: 0 0 6px rgba(248, 81, 73, 0.3); }
-  100% { box-shadow: 0 0 16px rgba(248, 81, 73, 0.8); }
+  0% { box-shadow: 0 0 6px rgba(248, 81, 73, 0.4); }
+  100% { box-shadow: 0 0 20px rgba(248, 81, 73, 0.95); }
+}
+
+.timer-text.danger {
+  color: #f85149;
+  text-shadow: 0 0 12px rgba(248, 81, 73, 0.7);
+  animation: timerDangerTextPulse 0.5s infinite alternate;
+}
+
+@keyframes timerDangerTextPulse {
+  0% { transform: scale(1); }
+  100% { transform: scale(1.08); text-shadow: 0 0 18px rgba(248, 81, 73, 0.95); }
 }
 
 .timer-text {

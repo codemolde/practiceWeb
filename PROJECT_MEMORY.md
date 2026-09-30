@@ -58,24 +58,29 @@ practiceWeb/
 
 ---
 
-## Current Upgrade: Animations, Wallpaper System & Artist QoL
-
+## Completed Upgrades: Living Atmosphere, Custom Wallpaper System & Artist QoL
 - [x] **Philosophy Alignment**: artist flow state, visual immersion, zero-friction shortcuts
-- [ ] **Animations & Rich Aesthetics**:
-  - Smooth view transitions and staggered card entries
-  - Glowing glassmorphic cards with hover tilt & lift
-  - Fluid timer animations with pulse alert
-  - Image crossfade and smooth blur transition
-  - Toast HUD notifications
-- [ ] **Background Wallpaper Feature**:
-  - Curated artist presets (Obsidian Slate, Atelier Indigo, Cyberpunk Velvet, Warm Parchment, Emerald Twilight, Sunset Glow)
-  - Custom image wallpaper with live blur & opacity sliders
-  - Persistent in localStorage
-- [ ] **Artist Quality of Life (QoL)**:
+- [x] **Living Atmosphere & Rich Aesthetics**:
+  - Interactive stardust / dust mote particle canvas with mouse parallax
+  - Tactile spark micro-bursts on element clicks and hotkey presses
+  - Multi-layer drifting ambient aura orbs with soft radial gradients
+  - Glowing glassmorphic cards with 3D tilt & dynamic specular mouse glare
+  - Synthesized Web Audio API tactile feedback (clicks, hovers, rating chords, timer warnings, singing bowl chime, celebration fanfare)
+  - Living breathing streak flame (`🔥`) and danger/warning timer pulse
+  - Smooth view transitions and staggered animations
+  - Toast HUD notifications for all hotkey actions
+- [x] **User-Custom Background Wallpaper System**:
+  - Set personal wallpaper from local machine (file picker or drag-and-drop) or image URL
+  - Real-time live blur slider (0px - 30px) and dark overlay dimming slider (10% - 90%)
+  - Persistent in IndexedDB (zero image file size limits)
+  - Reset to default dark studio slate option
+- [x] **Artist Quality of Life (QoL)**:
   - Grayscale / Value Check mode (`G`)
   - Proportion grid overlay (`O`)
   - Smooth drag-to-pan & mouse-wheel zoom
   - Invert color mode (`I`)
+  - Horizontal flip / mirror (`M`)
+  - 90° image rotation (`R`)
   - Distraction-free zen fullscreen (`F`)
   - Quick deck search & sorting
   - Keyboard shortcuts cheat sheet modal (`?`)
