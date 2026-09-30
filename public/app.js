@@ -583,6 +583,16 @@ const WallpaperManager = {
 
   async loadSavedWallpaper() {
     if (!this.settings.hasCustom) return;
+
+    // Check fast localStorage cache first for zero-flicker immediate render
+    try {
+      const cached = localStorage.getItem('artpractice_wallpaper_data');
+      if (cached) {
+        this.currentWallpaperDataUrl = cached;
+        this.applyStyles();
+      }
+    } catch (e) {}
+
     if (!this.db) return;
 
     return new Promise((resolve) => {
@@ -609,6 +619,15 @@ const WallpaperManager = {
     this.settings.hasCustom = true;
     Storage.saveWallpaperSettings(this.settings);
 
+    // Save to localStorage cache if under 2.5MB
+    try {
+      if (dataUrl.length < 2500000) {
+        localStorage.setItem('artpractice_wallpaper_data', dataUrl);
+      } else {
+        localStorage.removeItem('artpractice_wallpaper_data');
+      }
+    } catch (e) {}
+
     if (this.db) {
       try {
         const tx = this.db.transaction(['wallpapers'], 'readwrite');
@@ -628,6 +647,9 @@ const WallpaperManager = {
     this.currentWallpaperDataUrl = null;
     this.settings.hasCustom = false;
     Storage.saveWallpaperSettings(this.settings);
+    try {
+      localStorage.removeItem('artpractice_wallpaper_data');
+    } catch (e) {}
 
     if (this.db) {
       try {
@@ -661,12 +683,17 @@ const WallpaperManager = {
     const overlayEl = document.getElementById('wallpaper-overlay');
     if (!bgEl || !overlayEl) return;
 
-    if (this.currentWallpaperDataUrl && this.settings.hasCustom) {
-      bgEl.style.backgroundImage = `url("${this.currentWallpaperDataUrl}")`;
+    const hasCustom = Boolean(this.currentWallpaperDataUrl && this.settings.hasCustom);
+    document.body.classList.toggle('has-wallpaper', hasCustom);
+
+    if (hasCustom) {
+      bgEl.style.backgroundImage = `url("${this.currentWallpaperDataUrl.replace(/"/g, '\\"')}")`;
       bgEl.style.opacity = '1';
+      overlayEl.style.opacity = '1';
     } else {
       bgEl.style.backgroundImage = 'none';
       bgEl.style.opacity = '0';
+      overlayEl.style.opacity = '0';
     }
 
     document.documentElement.style.setProperty('--wallpaper-blur', `${this.settings.blur}px`);
@@ -1491,17 +1518,60 @@ const UI = {
       }
     });
 
+    // Choose file button
+    const browseFileBtn = document.getElementById('btn-browse-wallpaper-file');
+    if (browseFileBtn) {
+      browseFileBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        fileInput.click();
+      });
+    }
+
+    dropzone.addEventListener('click', (e) => {
+      if (e.target !== fileInput) {
+        fileInput.click();
+      }
+    });
+
+    // Paste image or URL from clipboard
+    modal.addEventListener('paste', (e) => {
+      const items = e.clipboardData?.items;
+      if (items) {
+        for (let i = 0; i < items.length; i++) {
+          if (items[i].type.startsWith('image/')) {
+            const file = items[i].getAsFile();
+            if (file) {
+              this.handleWallpaperFileUpload(file);
+              return;
+            }
+          }
+        }
+      }
+      const text = e.clipboardData?.getData('text')?.trim();
+      if (text && (text.startsWith('http') || text.startsWith('/') || text.startsWith('file://'))) {
+        urlInput.value = text;
+        applyUrlBtn.click();
+      }
+    });
+
     fileInput.addEventListener('change', (e) => {
       if (e.target.files && e.target.files.length > 0) {
         this.handleWallpaperFileUpload(e.target.files[0]);
       }
     });
 
-    // URL input
+    // URL or Local File Path input
     applyUrlBtn.addEventListener('click', () => {
-      const url = urlInput.value.trim();
-      if (url) {
-        WallpaperManager.setCustomWallpaper(url);
+      const raw = urlInput.value.trim();
+      if (raw) {
+        let finalUrl = raw;
+        if (raw.startsWith('file://')) {
+          finalUrl = `/api/image?path=${encodeURIComponent(raw.replace(/^file:\/\//, ''))}`;
+        } else if (raw.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(raw)) {
+          finalUrl = `/api/image?path=${encodeURIComponent(raw)}`;
+        }
+        WallpaperManager.setCustomWallpaper(finalUrl);
         urlInput.value = '';
       }
     });
@@ -1525,14 +1595,19 @@ const UI = {
   },
 
   handleWallpaperFileUpload(file) {
-    if (!file.type.startsWith('image/')) {
-      alert('Please select an image file (PNG, JPG, WEBP, etc.)');
+    if (!file) return;
+    const isImage = file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif|avif|svg|bmp)$/i.test(file.name);
+    if (!isImage) {
+      this.showToast('Please select an image file (PNG, JPG, WEBP, etc.)', '⚠️');
       return;
     }
 
     const reader = new FileReader();
     reader.onload = (e) => {
       WallpaperManager.setCustomWallpaper(e.target.result);
+    };
+    reader.onerror = () => {
+      this.showToast('Failed to load image file', '❌');
     };
     reader.readAsDataURL(file);
   },
