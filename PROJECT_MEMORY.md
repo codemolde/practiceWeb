@@ -49,42 +49,39 @@ practiceWeb/
 - [x] **Timer blur**: when timer ends, image gets blurred — must rate to proceed
 - [x] **Difficulty rating**: Hard/Medium/Easy with dynamic interval preview
 - [x] **Spaced repetition**: Anki-style interval scheduling
-  - Hard: 1d initial, subsequent = interval × 0.5 (min 1d), ease − 0.2
-  - Medium: 3d initial, subsequent = max(interval + 1d, interval × ease)
-  - Easy: 7d initial, subsequent = max(interval + 2d, interval × ease × 1.3), ease + 0.15
 - [x] **Review history heatmap**: GitHub-style calendar heatmap per deck
-  - Green gradient: past days colored by review count
-  - Grey gradient: future days colored by scheduled review count
-  - Tooltip on hover showing date + count
-  - Auto-scrolls to today
 - [x] **Activity stats**: daily average, days learned %, longest streak, current streak
 - [x] **Today's Reviewed button**: shows list of cards reviewed today with difficulty + next review date
 - [x] **Daily Limits (Anki-style)**: configure Max New Cards/Day and Max Reviews/Day per deck
-  - UI shows how many new/review cards are left for today based on these limits
-  - Separate "Study New", "Review Due", and "Free Study" buttons
-- [x] **Keyboard shortcuts**: 1/2/3 = rate, S = skip, Space = pause timer
-- [x] **Audio beep**: plays when timer ends
-- [x] **Data persistence**: localStorage survives refreshes
-- [x] **Review history tracking**: `ReviewHistory` module tracks daily new/review counts per deck in `artpractice_history`
+- [x] **Safe Git baseline**: original code committed safely to git
+- [x] **Core Philosophy**: documented in memory.md and PROJECT_MEMORY.md
 
 ---
 
-## Known Bugs
+## Current Upgrade: Animations, Wallpaper System & Artist QoL
 
-- **FIXED**: Timer pause button showing "Resume" after rating — now resets to "Pause" on each new image
+- [x] **Philosophy Alignment**: artist flow state, visual immersion, zero-friction shortcuts
+- [ ] **Animations & Rich Aesthetics**:
+  - Smooth view transitions and staggered card entries
+  - Glowing glassmorphic cards with hover tilt & lift
+  - Fluid timer animations with pulse alert
+  - Image crossfade and smooth blur transition
+  - Toast HUD notifications
+- [ ] **Background Wallpaper Feature**:
+  - Curated artist presets (Obsidian Slate, Atelier Indigo, Cyberpunk Velvet, Warm Parchment, Emerald Twilight, Sunset Glow)
+  - Custom image wallpaper with live blur & opacity sliders
+  - Persistent in localStorage
+- [ ] **Artist Quality of Life (QoL)**:
+  - Grayscale / Value Check mode (`G`)
+  - Proportion grid overlay (`O`)
+  - Smooth drag-to-pan & mouse-wheel zoom
+  - Invert color mode (`I`)
+  - Distraction-free zen fullscreen (`F`)
+  - Quick deck search & sorting
+  - Keyboard shortcuts cheat sheet modal (`?`)
+  - Session complete celebration & summary modal
+  - Backup & restore (Export/Import JSON)
 
----
-
-## Planned Features / Ideas
-
-- [ ] **Export/Import data**: backup/restore decks + card history as JSON
-- [ ] **Session statistics**: show session summary after ending (cards rated, time spent)
-- [ ] **Image zoom**: click to enlarge/zoom into the reference image
-- [ ] **Deck sorting**: sort decks by name, due count, or date created
-- [ ] **Tag system**: tag images within a deck for sub-categories
-- [ ] **Fullscreen mode**: distraction-free practice mode
-- [ ] **Custom SRS intervals**: let user configure base intervals per deck (multiplier/ease bounds)
-- [ ] **Dark/light theme toggle**: currently dark-only
 
 ---
 

@@ -3,37 +3,101 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Art Practice Reference</title>
+  <title>Art Practice Reference — Artist Study & SRS Drill</title>
+  <meta name="description" content="Distraction-free art practice and spaced repetition reference tool for artists, gesture sketchers, and figure studies.">
+  
+  <!-- Modern Typography -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <!-- Dynamic Background Wallpaper System -->
+  <div id="wallpaper-bg" class="wallpaper-bg"></div>
+  <div id="wallpaper-overlay" class="wallpaper-overlay"></div>
+
+  <!-- Toast Notification HUD -->
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
   <div id="app">
 
     <!-- ==================== DECK LIST VIEW ==================== -->
     <div id="view-deck-list" class="view active">
       <header class="app-header">
-        <h1>Art Practice</h1>
-        <button id="btn-new-deck" class="btn btn-primary">+ New Deck</button>
+        <div class="brand-group">
+          <div class="brand-badge">
+            <span class="brand-icon">🎨</span>
+            <span class="brand-sub">STUDIO</span>
+          </div>
+          <div class="brand-text">
+            <h1>Art Practice</h1>
+            <p class="brand-tagline">Visual Library & Reference Drills</p>
+          </div>
+        </div>
+
+        <div class="header-actions">
+          <button id="btn-open-wallpaper" class="btn btn-secondary" title="Customize Background Wallpaper">
+            <span class="btn-icon">🖼️</span> Wallpaper
+          </button>
+          <button id="btn-open-backup" class="btn btn-secondary" title="Backup or Restore Data">
+            <span class="btn-icon">💾</span> Data
+          </button>
+          <button id="btn-open-shortcuts" class="btn btn-secondary" title="View Keyboard Shortcuts (?)">
+            <span class="btn-icon">⌨️</span> Hotkeys <kbd>?</kbd>
+          </button>
+          <button id="btn-new-deck" class="btn btn-primary">
+            <span class="btn-icon">＋</span> New Deck
+          </button>
+        </div>
       </header>
+
+      <!-- Search & Filter Bar -->
+      <div class="deck-filter-bar">
+        <div class="search-box">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="deck-search-input" placeholder="Search decks by name or path..." autocomplete="off">
+          <button id="btn-clear-search" class="btn-clear-search hidden" title="Clear search">✕</button>
+        </div>
+        <div class="sort-box">
+          <label for="deck-sort-select">Sort by:</label>
+          <select id="deck-sort-select" class="select-input">
+            <option value="due-desc">Due Cards (Most First)</option>
+            <option value="name-asc">Name (A – Z)</option>
+            <option value="total-desc">Total Images</option>
+            <option value="newest">Recently Created</option>
+          </select>
+        </div>
+      </div>
 
       <div id="deck-list" class="deck-list">
         <!-- Decks rendered here by JS -->
       </div>
 
-      <div id="empty-state" class="empty-state">
-        <p>No decks yet. Create one to get started!</p>
+      <div id="empty-state" class="empty-state hidden">
+        <div class="empty-state-illustration">🖌️</div>
+        <h3>No Decks Found</h3>
+        <p>Create your first reference deck or choose a folder to start practicing.</p>
+        <button id="btn-empty-new-deck" class="btn btn-primary btn-large">+ Create New Deck</button>
       </div>
     </div>
 
     <!-- ==================== DECK DETAIL VIEW ==================== -->
     <div id="view-deck-detail" class="view">
       <header class="deck-header">
-        <button id="btn-back-to-list" class="btn btn-ghost">← Back</button>
+        <button id="btn-back-to-list" class="btn btn-ghost">
+          <span>←</span> Back to Decks
+        </button>
         <div class="deck-title-area">
-          <h2 id="deck-detail-name"></h2>
-          <p id="deck-detail-path" class="deck-path"></p>
+          <div class="deck-title-row">
+            <h2 id="deck-detail-name"></h2>
+            <span id="deck-detail-due-pill" class="badge-pill hidden">Due Today</span>
+          </div>
+          <p id="deck-detail-path" class="deck-path" title="Folder path"></p>
         </div>
         <div class="deck-header-actions">
+          <button id="btn-detail-wallpaper" class="btn btn-ghost" title="Customize Wallpaper">🖼️ Wallpaper</button>
           <button id="btn-edit-deck" class="btn btn-ghost">Edit</button>
           <button id="btn-delete-deck" class="btn btn-danger-ghost">Delete</button>
         </div>
@@ -41,44 +105,51 @@
 
       <div class="deck-stats-row">
         <div class="stat-card">
+          <div class="stat-card-icon">📁</div>
           <span class="stat-value" id="stat-total">0</span>
           <span class="stat-label">Total Images</span>
         </div>
         <div class="stat-card stat-due">
+          <div class="stat-card-icon">⚡</div>
           <span class="stat-value" id="stat-due">0</span>
           <span class="stat-label">Due Today</span>
         </div>
         <div class="stat-card">
+          <div class="stat-card-icon">✨</div>
           <span class="stat-value" id="stat-reviewed">0</span>
-          <span class="stat-label">Reviewed</span>
+          <span class="stat-label">Mastered / Reviewed</span>
         </div>
         <div class="stat-card">
+          <div class="stat-card-icon">🌱</div>
           <span class="stat-value" id="stat-new">0</span>
-          <span class="stat-label">New</span>
+          <span class="stat-label">Unseen Cards</span>
         </div>
       </div>
 
       <!-- Timer Settings -->
       <div class="timer-settings">
-        <h3>Timer</h3>
+        <div class="timer-settings-header">
+          <h3>⏱ Practice Timer</h3>
+          <span class="timer-hint">Auto-blurs reference when time ends to test recall</span>
+        </div>
         <div class="timer-options">
           <label class="timer-option">
             <input type="radio" name="timer" value="0" checked> No Timer
           </label>
           <label class="timer-option">
-            <input type="radio" name="timer" value="30"> 30s
+            <input type="radio" name="timer" value="30"> 30s <span class="tag-quick">Gesture</span>
           </label>
           <label class="timer-option">
             <input type="radio" name="timer" value="60"> 1m
           </label>
           <label class="timer-option">
-            <input type="radio" name="timer" value="120"> 2m
+            <input type="radio" name="timer" value="120"> 2m <span class="tag-quick">Quick Pose</span>
           </label>
           <label class="timer-option">
             <input type="radio" name="timer" value="300"> 5m
           </label>
           <label class="timer-option">
-            <input type="radio" name="timer" value="600"> 10m
+            <input type="radio" name="timer" value="600"> 10m <span class="tag-quick">Study</span>
           </label>
           <label class="timer-option custom-timer">
             <input type="radio" name="timer" value="custom"> Custom:
@@ -88,16 +159,30 @@
       </div>
 
       <div class="deck-actions">
-        <button id="btn-study-new" class="btn btn-primary btn-large">Study New (<span id="btn-new-count">0</span>)</button>
-        <button id="btn-review" class="btn btn-secondary btn-large">Review Due (<span id="btn-review-count">0</span>)</button>
-        <button id="btn-free-study" class="btn btn-ghost btn-large">Free Study</button>
+        <button id="btn-study-new" class="btn btn-primary btn-large btn-action-card">
+          <span class="action-title">Study New</span>
+          <span class="action-count">(<span id="btn-new-count">0</span> left today)</span>
+        </button>
+        <button id="btn-review" class="btn btn-secondary btn-large btn-action-card">
+          <span class="action-title">Review Due</span>
+          <span class="action-count">(<span id="btn-review-count">0</span> due)</span>
+        </button>
+        <button id="btn-free-study" class="btn btn-ghost btn-large btn-action-card">
+          <span class="action-title">Free Study</span>
+          <span class="action-count">(Endless shuffle)</span>
+        </button>
       </div>
 
       <!-- Heatmap & Activity Section -->
       <div class="activity-section">
         <div class="activity-header">
-          <h3>Review Activity</h3>
-          <button id="btn-todays-reviewed" class="btn btn-secondary btn-small">Today's Reviewed (<span id="todays-reviewed-count">0</span>)</button>
+          <div class="activity-title-group">
+            <h3>Review Activity Heatmap</h3>
+            <span class="activity-subtitle">Consistent daily sketching builds a resilient visual library</span>
+          </div>
+          <button id="btn-todays-reviewed" class="btn btn-secondary btn-small">
+            Today's Reviewed (<span id="todays-reviewed-count">0</span>)
+          </button>
         </div>
 
         <!-- Heatmap -->
@@ -135,20 +220,20 @@
         <!-- Activity Stats -->
         <div class="activity-stats-row">
           <div class="activity-stat">
-            <span class="activity-stat-label">Daily average:</span>
+            <span class="activity-stat-label">Daily Average:</span>
             <span class="activity-stat-value" id="stat-daily-avg">0 cards</span>
           </div>
           <div class="activity-stat">
-            <span class="activity-stat-label">Days learned:</span>
+            <span class="activity-stat-label">Days Learned (30d):</span>
             <span class="activity-stat-value" id="stat-days-learned">0%</span>
           </div>
           <div class="activity-stat">
-            <span class="activity-stat-label">Longest streak:</span>
+            <span class="activity-stat-label">Longest Streak:</span>
             <span class="activity-stat-value" id="stat-longest-streak">0 days</span>
           </div>
           <div class="activity-stat">
-            <span class="activity-stat-label">Current streak:</span>
-            <span class="activity-stat-value" id="stat-current-streak">0 days</span>
+            <span class="activity-stat-label">Current Streak:</span>
+            <span class="activity-stat-value" id="stat-current-streak">0 days 🔥</span>
           </div>
         </div>
       </div>
@@ -157,13 +242,20 @@
     <!-- ==================== SESSION VIEW ==================== -->
     <div id="view-session" class="view">
       <header class="session-header">
-        <button id="btn-end-session" class="btn btn-ghost">← End Session</button>
+        <button id="btn-end-session" class="btn btn-ghost">
+          <span>←</span> End Session
+        </button>
         <div class="session-info">
-          <span id="session-deck-name"></span>
+          <span id="session-deck-name" class="session-title"></span>
           <span id="session-mode-label" class="session-mode-badge"></span>
         </div>
-        <div class="session-counter">
-          <span id="session-progress"></span>
+        <div class="session-right-controls">
+          <div class="session-counter">
+            <span id="session-progress">#1</span>
+          </div>
+          <button id="btn-session-zen" class="btn btn-ghost btn-small" title="Toggle Zen / Fullscreen Mode [F]">
+            <span class="zen-icon">⛶</span> Zen
+          </button>
         </div>
       </header>
 
@@ -174,54 +266,289 @@
         </div>
         <span id="timer-text" class="timer-text">0:00</span>
         <div class="timer-controls">
-          <button id="btn-timer-pause" class="btn btn-ghost btn-small">Pause</button>
-          <button id="btn-timer-reset" class="btn btn-ghost btn-small">Reset</button>
+          <button id="btn-timer-pause" class="btn btn-ghost btn-small" title="Pause / Resume [Space]">Pause</button>
+          <button id="btn-timer-reset" class="btn btn-ghost btn-small" title="Reset Timer">Reset</button>
         </div>
       </div>
 
-      <!-- Image Display -->
+      <!-- Image Display & Artist Canvas -->
       <div class="image-container" id="session-image-container">
-        <div class="image-toolbar">
-          <button id="btn-img-zoom-in" class="btn btn-ghost btn-small" title="Zoom In">➕</button>
-          <button id="btn-img-zoom-out" class="btn btn-ghost btn-small" title="Zoom Out">➖</button>
-          <button id="btn-img-flip" class="btn btn-ghost btn-small" title="Flip Horizontal">↔</button>
-          <button id="btn-img-rotate" class="btn btn-ghost btn-small" title="Rotate">⟳</button>
-          <button id="btn-img-fullscreen" class="btn btn-ghost btn-small" title="Fullscreen">⛶</button>
+        
+        <!-- Artist Toolbar HUD -->
+        <div class="image-toolbar" id="session-image-toolbar">
+          <button id="btn-art-grayscale" class="btn btn-hud" title="Value Check (Grayscale) [G]">
+            <span>◐</span> Value
+          </button>
+          <button id="btn-art-grid" class="btn btn-hud" title="Proportion Grid Overlay [O]">
+            <span>⌗</span> Grid
+          </button>
+          <button id="btn-art-invert" class="btn btn-hud" title="Invert Colors (Silhouette Check) [I]">
+            <span>☯</span> Invert
+          </button>
+          <button id="btn-img-flip" class="btn btn-hud" title="Flip Horizontal [M]">
+            <span>⇄</span> Flip
+          </button>
+          <button id="btn-img-rotate" class="btn btn-hud" title="Rotate 90° [R]">
+            <span>⟳</span>
+          </button>
+          <div class="hud-divider"></div>
+          <button id="btn-img-zoom-in" class="btn btn-hud" title="Zoom In [+]">＋</button>
+          <button id="btn-img-zoom-out" class="btn btn-hud" title="Zoom Out [-]">－</button>
+          <button id="btn-img-zoom-reset" class="btn btn-hud" title="Reset Zoom [0]">1:1</button>
+          <button id="btn-img-fullscreen" class="btn btn-hud" title="Fullscreen [F]">⛶</button>
         </div>
+
+        <!-- Proportion Grid Overlay (Toggleable) -->
+        <div id="image-grid-overlay" class="image-grid-overlay hidden">
+          <div class="grid-line grid-v1"></div>
+          <div class="grid-line grid-v2"></div>
+          <div class="grid-line grid-h1"></div>
+          <div class="grid-line grid-h2"></div>
+        </div>
+
+        <!-- Blur Overlay when timer ends -->
         <div id="image-blur-overlay" class="image-blur-overlay hidden">
-          <div class="blur-message">⏱ Time's up! Rate this reference.</div>
+          <div class="blur-card">
+            <div class="blur-bell">⏱</div>
+            <div class="blur-title">Time's Up!</div>
+            <p class="blur-prompt">Rate this reference to proceed to the next study.</p>
+          </div>
         </div>
-        <img id="session-image" src="" alt="Reference image">
+
+        <!-- Reference Image Stage -->
+        <div class="image-stage" id="image-stage">
+          <img id="session-image" src="" alt="Reference Image" draggable="false">
+        </div>
+
         <p id="session-image-name" class="image-name"></p>
       </div>
 
-      <!-- Rating Buttons -->
+      <!-- Rating Area -->
       <div class="rating-area">
-        <p class="rating-prompt">How was this reference?</p>
+        <p class="rating-prompt">How was this reference recall?</p>
         <div class="rating-buttons">
-          <button id="btn-rate-hard" class="btn btn-rate btn-hard">
-            Hard
+          <button id="btn-rate-hard" class="btn btn-rate btn-hard" title="Rate Hard [Key 1]">
+            <span class="rate-badge">1</span>
+            <span class="rate-name">Hard</span>
             <span class="rate-interval">1 day</span>
           </button>
-          <button id="btn-rate-medium" class="btn btn-rate btn-medium">
-            Medium
+          <button id="btn-rate-medium" class="btn btn-rate btn-medium" title="Rate Medium [Key 2]">
+            <span class="rate-badge">2</span>
+            <span class="rate-name">Medium</span>
             <span class="rate-interval">3 days</span>
           </button>
-          <button id="btn-rate-easy" class="btn btn-rate btn-easy">
-            Easy
+          <button id="btn-rate-easy" class="btn btn-rate btn-easy" title="Rate Easy [Key 3]">
+            <span class="rate-badge">3</span>
+            <span class="rate-name">Easy</span>
             <span class="rate-interval">7 days</span>
           </button>
         </div>
         <div class="session-nav-buttons">
-          <button id="btn-skip" class="btn btn-ghost">Skip (no rating)</button>
+          <button id="btn-skip" class="btn btn-ghost" title="Skip image [Key S]">
+            Skip (no rating) <kbd>S</kbd>
+          </button>
         </div>
       </div>
 
       <!-- Empty review state -->
       <div id="review-empty" class="review-empty hidden">
-        <h2>All caught up!</h2>
-        <p>No more cards due for review in this deck.</p>
-        <button id="btn-review-done" class="btn btn-primary">Back to Deck</button>
+        <div class="empty-icon">🎉</div>
+        <h2>All Caught Up!</h2>
+        <p>No more cards due for review in this deck today.</p>
+        <button id="btn-review-done" class="btn btn-primary btn-large">Back to Deck</button>
+      </div>
+    </div>
+
+    <!-- ==================== MODAL: User-Custom Background Wallpaper ==================== -->
+    <div id="modal-wallpaper" class="modal-overlay hidden">
+      <div class="modal modal-wallpaper-custom">
+        <div class="modal-header-row">
+          <h2>🎨 Custom Background Wallpaper</h2>
+          <button type="button" class="btn-modal-close" id="btn-close-wallpaper-x">✕</button>
+        </div>
+        <p class="modal-subtext">Add your own inspiring art, studio wallpaper, or photo to make this space your personal atelier.</p>
+
+        <!-- Dropzone / File Picker -->
+        <div class="wallpaper-dropzone" id="wallpaper-dropzone">
+          <div class="dropzone-content">
+            <div class="dropzone-icon">🖼️</div>
+            <p class="dropzone-label"><strong>Drag & Drop your wallpaper image here</strong> or click to browse</p>
+            <span class="dropzone-sub">Supports PNG, JPG, WEBP, GIF, AVIF</span>
+          </div>
+          <input type="file" id="wallpaper-file-input" accept="image/*" class="wallpaper-file-input">
+        </div>
+
+        <!-- URL / Path Option -->
+        <div class="form-group" style="margin-top: 14px;">
+          <label for="wallpaper-url-input">Or paste an Image URL / Local Path:</label>
+          <div class="input-with-button">
+            <input type="text" id="wallpaper-url-input" placeholder="https://example.com/art.jpg or local path">
+            <button type="button" id="btn-apply-wallpaper-url" class="btn btn-secondary">Apply</button>
+          </div>
+        </div>
+
+        <!-- Live Controls (Blur & Dimming) -->
+        <div class="wallpaper-controls-box">
+          <div class="control-row">
+            <div class="control-label-group">
+              <label for="wallpaper-blur-slider">Wallpaper Blur</label>
+              <span id="wallpaper-blur-val" class="control-val">8px</span>
+            </div>
+            <input type="range" id="wallpaper-blur-slider" min="0" max="30" value="8" step="1" class="slider-input">
+            <small class="form-hint">Softer blur keeps background aesthetic without distracting from references.</small>
+          </div>
+
+          <div class="control-row" style="margin-top: 14px;">
+            <div class="control-label-group">
+              <label for="wallpaper-dim-slider">Dark Dimming Overlay</label>
+              <span id="wallpaper-dim-val" class="control-val">50%</span>
+            </div>
+            <input type="range" id="wallpaper-dim-slider" min="10" max="90" value="50" step="5" class="slider-input">
+            <small class="form-hint">Darker overlay ensures UI text and reference images remain crisp.</small>
+          </div>
+        </div>
+
+        <!-- Current Wallpaper Status / Preview -->
+        <div class="wallpaper-status-box" id="wallpaper-status-box">
+          <div class="wallpaper-preview-thumb" id="wallpaper-preview-thumb"></div>
+          <div class="wallpaper-status-details">
+            <span id="wallpaper-status-text" class="status-name">No custom wallpaper set (Default Studio Dark)</span>
+            <button type="button" id="btn-remove-wallpaper" class="btn btn-danger-ghost btn-small hidden">
+              Remove Custom Wallpaper
+            </button>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" id="btn-close-wallpaper" class="btn btn-primary">Done</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== MODAL: Keyboard Shortcuts ==================== -->
+    <div id="modal-shortcuts" class="modal-overlay hidden">
+      <div class="modal modal-shortcuts-view">
+        <div class="modal-header-row">
+          <h2>⌨️ Artist Keyboard Shortcuts</h2>
+          <button type="button" class="btn-modal-close" id="btn-close-shortcuts-x">✕</button>
+        </div>
+        <p class="modal-subtext">Keep both hands on your stylus and keyboard for rapid flow state.</p>
+
+        <div class="shortcuts-grid">
+          <div class="shortcut-item">
+            <div class="shortcut-keys"><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></div>
+            <div class="shortcut-desc">Rate card: Hard / Medium / Easy</div>
+          </div>
+          <div class="shortcut-item">
+            <div class="shortcut-keys"><kbd>Space</kbd></div>
+            <div class="shortcut-desc">Pause / Resume timer</div>
+          </div>
+          <div class="shortcut-item">
+            <div class="shortcut-keys"><kbd>S</kbd></div>
+            <div class="shortcut-desc">Skip reference without rating</div>
+          </div>
+          <div class="shortcut-item">
+            <div class="shortcut-keys"><kbd>G</kbd></div>
+            <div class="shortcut-desc">Value Check (Grayscale filter toggle)</div>
+          </div>
+          <div class="shortcut-item">
+            <div class="shortcut-keys"><kbd>O</kbd></div>
+            <div class="shortcut-desc">Toggle Proportion Grid Overlay</div>
+          </div>
+          <div class="shortcut-item">
+            <div class="shortcut-keys"><kbd>M</kbd></div>
+            <div class="shortcut-desc">Flip / Mirror image horizontally</div>
+          </div>
+          <div class="shortcut-item">
+            <div class="shortcut-keys"><kbd>I</kbd></div>
+            <div class="shortcut-desc">Invert colors (Negative space check)</div>
+          </div>
+          <div class="shortcut-item">
+            <div class="shortcut-keys"><kbd>R</kbd></div>
+            <div class="shortcut-desc">Rotate image 90 degrees</div>
+          </div>
+          <div class="shortcut-item">
+            <div class="shortcut-keys"><kbd>+</kbd> / <kbd>-</kbd></div>
+            <div class="shortcut-desc">Zoom in / Zoom out (or mouse wheel)</div>
+          </div>
+          <div class="shortcut-item">
+            <div class="shortcut-keys"><kbd>0</kbd></div>
+            <div class="shortcut-desc">Reset Zoom and Pan</div>
+          </div>
+          <div class="shortcut-item">
+            <div class="shortcut-keys"><kbd>F</kbd></div>
+            <div class="shortcut-desc">Toggle Zen Fullscreen Mode</div>
+          </div>
+          <div class="shortcut-item">
+            <div class="shortcut-keys"><kbd>?</kbd></div>
+            <div class="shortcut-desc">Open this shortcuts guide</div>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" id="btn-close-shortcuts" class="btn btn-primary">Got It</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== MODAL: Session Complete Summary ==================== -->
+    <div id="modal-session-summary" class="modal-overlay hidden">
+      <div class="modal modal-summary-view">
+        <div class="summary-celebration">🎉</div>
+        <h2>Session Complete!</h2>
+        <p class="summary-deck-title" id="summary-deck-title"></p>
+        <div class="summary-stats-box">
+          <div class="summary-stat-cell">
+            <span class="stat-number" id="summary-total-reviewed">0</span>
+            <span class="stat-caption">References Practiced</span>
+          </div>
+          <div class="summary-stat-cell">
+            <span class="stat-number" id="summary-streak-val">0 🔥</span>
+            <span class="stat-caption">Current Streak</span>
+          </div>
+        </div>
+        <div class="summary-breakdown" id="summary-breakdown">
+          <!-- Breakdown injected by JS -->
+        </div>
+        <div class="modal-actions" style="justify-content: center; gap: 12px; margin-top: 24px;">
+          <button type="button" id="btn-summary-done" class="btn btn-primary btn-large">Back to Deck</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== MODAL: Data Backup & Restore ==================== -->
+    <div id="modal-backup" class="modal-overlay hidden">
+      <div class="modal">
+        <div class="modal-header-row">
+          <h2>💾 Data Backup & Restore</h2>
+          <button type="button" class="btn-modal-close" id="btn-close-backup-x">✕</button>
+        </div>
+        <p class="modal-subtext">Export your decks, cards, and review streak history to safely back up your visual library progress.</p>
+
+        <div class="backup-actions-grid">
+          <div class="backup-box">
+            <h4>Export Progress</h4>
+            <p>Download a JSON backup of all your decks and review history.</p>
+            <button type="button" id="btn-export-data" class="btn btn-secondary" style="width: 100%;">
+              📥 Export to JSON
+            </button>
+          </div>
+
+          <div class="backup-box">
+            <h4>Restore Progress</h4>
+            <p>Restore your saved decks and card intervals from a backup JSON file.</p>
+            <input type="file" id="backup-file-input" accept=".json" class="hidden">
+            <button type="button" id="btn-import-data" class="btn btn-secondary" style="width: 100%;">
+              📤 Select Backup File
+            </button>
+          </div>
+        </div>
+
+        <div id="backup-status" class="form-hint" style="margin-top: 14px; text-align: center;"></div>
+
+        <div class="modal-actions">
+          <button type="button" id="btn-close-backup" class="btn btn-ghost">Close</button>
+        </div>
       </div>
     </div>
 
@@ -232,7 +559,7 @@
         <form id="form-deck">
           <div class="form-group">
             <label for="input-deck-name">Deck Name</label>
-            <input type="text" id="input-deck-name" placeholder="e.g. Gesture Drawing" required>
+            <input type="text" id="input-deck-name" placeholder="e.g. Dynamic Poses & Gesture" required>
           </div>
           <div class="form-group">
             <label for="input-deck-folder">Folder Path</label>
@@ -255,7 +582,7 @@
           <div id="folder-error" class="form-error hidden"></div>
           <div class="modal-actions">
             <button type="button" id="btn-cancel-deck" class="btn btn-ghost">Cancel</button>
-            <button type="submit" class="btn btn-primary">Save</button>
+            <button type="submit" class="btn btn-primary">Save Deck</button>
           </div>
         </form>
       </div>
