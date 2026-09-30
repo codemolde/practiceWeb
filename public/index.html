@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Art Practice Reference</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+
+    <!-- ==================== DECK LIST VIEW ==================== -->
+    <div id="view-deck-list" class="view active">
+      <header class="app-header">
+        <h1>Art Practice</h1>
+        <button id="btn-new-deck" class="btn btn-primary">+ New Deck</button>
+      </header>
+
+      <div id="deck-list" class="deck-list">
+        <!-- Decks rendered here by JS -->
+      </div>
+
+      <div id="empty-state" class="empty-state">
+        <p>No decks yet. Create one to get started!</p>
+      </div>
+    </div>
+
+    <!-- ==================== DECK DETAIL VIEW ==================== -->
+    <div id="view-deck-detail" class="view">
+      <header class="deck-header">
+        <button id="btn-back-to-list" class="btn btn-ghost">← Back</button>
+        <div class="deck-title-area">
+          <h2 id="deck-detail-name"></h2>
+          <p id="deck-detail-path" class="deck-path"></p>
+        </div>
+        <div class="deck-header-actions">
+          <button id="btn-edit-deck" class="btn btn-ghost">Edit</button>
+          <button id="btn-delete-deck" class="btn btn-danger-ghost">Delete</button>
+        </div>
+      </header>
+
+      <div class="deck-stats-row">
+        <div class="stat-card">
+          <span class="stat-value" id="stat-total">0</span>
+          <span class="stat-label">Total Images</span>
+        </div>
+        <div class="stat-card stat-due">
+          <span class="stat-value" id="stat-due">0</span>
+          <span class="stat-label">Due Today</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-value" id="stat-reviewed">0</span>
+          <span class="stat-label">Reviewed</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-value" id="stat-new">0</span>
+          <span class="stat-label">New</span>
+        </div>
+      </div>
+
+      <!-- Timer Settings -->
+      <div class="timer-settings">
+        <h3>Timer</h3>
+        <div class="timer-options">
+          <label class="timer-option">
+            <input type="radio" name="timer" value="0" checked> No Timer
+          </label>
+          <label class="timer-option">
+            <input type="radio" name="timer" value="30"> 30s
+          </label>
+          <label class="timer-option">
+            <input type="radio" name="timer" value="60"> 1m
+          </label>
+          <label class="timer-option">
+            <input type="radio" name="timer" value="120"> 2m
+          </label>
+          <label class="timer-option">
+            <input type="radio" name="timer" value="300"> 5m
+          </label>
+          <label class="timer-option">
+            <input type="radio" name="timer" value="600"> 10m
+          </label>
+          <label class="timer-option custom-timer">
+            <input type="radio" name="timer" value="custom"> Custom:
+            <input type="number" id="custom-timer-input" min="1" max="3600" placeholder="sec" class="custom-timer-field">
+          </label>
+        </div>
+      </div>
+
+      <div class="deck-actions">
+        <button id="btn-study-new" class="btn btn-primary btn-large">Study New (<span id="btn-new-count">0</span>)</button>
+        <button id="btn-review" class="btn btn-secondary btn-large">Review Due (<span id="btn-review-count">0</span>)</button>
+        <button id="btn-free-study" class="btn btn-ghost btn-large">Free Study</button>
+      </div>
+
+      <!-- Heatmap & Activity Section -->
+      <div class="activity-section">
+        <div class="activity-header">
+          <h3>Review Activity</h3>
+          <button id="btn-todays-reviewed" class="btn btn-secondary btn-small">Today's Reviewed (<span id="todays-reviewed-count">0</span>)</button>
+        </div>
+
+        <!-- Heatmap -->
+        <div class="heatmap-wrapper">
+          <div class="heatmap-legend-left">
+            <span>Mon</span><span></span><span>Wed</span><span></span><span>Fri</span><span></span><span>Sun</span>
+          </div>
+          <div class="heatmap-scroll">
+            <div id="heatmap-months" class="heatmap-months"></div>
+            <div id="heatmap-grid" class="heatmap-grid"></div>
+          </div>
+        </div>
+
+        <!-- Heatmap Legend -->
+        <div class="heatmap-footer">
+          <div class="heatmap-color-legend">
+            <span class="legend-label">Less</span>
+            <span class="legend-cell" style="background: var(--bg-input)"></span>
+            <span class="legend-cell" style="background: #0e4429"></span>
+            <span class="legend-cell" style="background: #006d32"></span>
+            <span class="legend-cell" style="background: #26a641"></span>
+            <span class="legend-cell" style="background: #39d353"></span>
+            <span class="legend-label">More</span>
+            <span style="margin-left: 12px" class="legend-label">Reviewed</span>
+            <span style="margin-left: 16px" class="legend-label">|</span>
+            <span style="margin-left: 8px" class="legend-cell" style="background: var(--bg-input)"></span>
+            <span class="legend-cell" style="background: #2a2a2a"></span>
+            <span class="legend-cell" style="background: #3a3a3a"></span>
+            <span class="legend-cell" style="background: #555"></span>
+            <span class="legend-cell" style="background: #777"></span>
+            <span class="legend-label">Scheduled</span>
+          </div>
+        </div>
+
+        <!-- Activity Stats -->
+        <div class="activity-stats-row">
+          <div class="activity-stat">
+            <span class="activity-stat-label">Daily average:</span>
+            <span class="activity-stat-value" id="stat-daily-avg">0 cards</span>
+          </div>
+          <div class="activity-stat">
+            <span class="activity-stat-label">Days learned:</span>
+            <span class="activity-stat-value" id="stat-days-learned">0%</span>
+          </div>
+          <div class="activity-stat">
+            <span class="activity-stat-label">Longest streak:</span>
+            <span class="activity-stat-value" id="stat-longest-streak">0 days</span>
+          </div>
+          <div class="activity-stat">
+            <span class="activity-stat-label">Current streak:</span>
+            <span class="activity-stat-value" id="stat-current-streak">0 days</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== SESSION VIEW ==================== -->
+    <div id="view-session" class="view">
+      <header class="session-header">
+        <button id="btn-end-session" class="btn btn-ghost">← End Session</button>
+        <div class="session-info">
+          <span id="session-deck-name"></span>
+          <span id="session-mode-label" class="session-mode-badge"></span>
+        </div>
+        <div class="session-counter">
+          <span id="session-progress"></span>
+        </div>
+      </header>
+
+      <!-- Timer Display -->
+      <div id="timer-display" class="timer-display hidden">
+        <div class="timer-bar-container">
+          <div id="timer-bar" class="timer-bar"></div>
+        </div>
+        <span id="timer-text" class="timer-text">0:00</span>
+        <div class="timer-controls">
+          <button id="btn-timer-pause" class="btn btn-ghost btn-small">Pause</button>
+          <button id="btn-timer-reset" class="btn btn-ghost btn-small">Reset</button>
+        </div>
+      </div>
+
+      <!-- Image Display -->
+      <div class="image-container" id="session-image-container">
+        <div class="image-toolbar">
+          <button id="btn-img-zoom-in" class="btn btn-ghost btn-small" title="Zoom In">➕</button>
+          <button id="btn-img-zoom-out" class="btn btn-ghost btn-small" title="Zoom Out">➖</button>
+          <button id="btn-img-flip" class="btn btn-ghost btn-small" title="Flip Horizontal">↔</button>
+          <button id="btn-img-rotate" class="btn btn-ghost btn-small" title="Rotate">⟳</button>
+          <button id="btn-img-fullscreen" class="btn btn-ghost btn-small" title="Fullscreen">⛶</button>
+        </div>
+        <div id="image-blur-overlay" class="image-blur-overlay hidden">
+          <div class="blur-message">⏱ Time's up! Rate this reference.</div>
+        </div>
+        <img id="session-image" src="" alt="Reference image">
+        <p id="session-image-name" class="image-name"></p>
+      </div>
+
+      <!-- Rating Buttons -->
+      <div class="rating-area">
+        <p class="rating-prompt">How was this reference?</p>
+        <div class="rating-buttons">
+          <button id="btn-rate-hard" class="btn btn-rate btn-hard">
+            Hard
+            <span class="rate-interval">1 day</span>
+          </button>
+          <button id="btn-rate-medium" class="btn btn-rate btn-medium">
+            Medium
+            <span class="rate-interval">3 days</span>
+          </button>
+          <button id="btn-rate-easy" class="btn btn-rate btn-easy">
+            Easy
+            <span class="rate-interval">7 days</span>
+          </button>
+        </div>
+        <div class="session-nav-buttons">
+          <button id="btn-skip" class="btn btn-ghost">Skip (no rating)</button>
+        </div>
+      </div>
+
+      <!-- Empty review state -->
+      <div id="review-empty" class="review-empty hidden">
+        <h2>All caught up!</h2>
+        <p>No more cards due for review in this deck.</p>
+        <button id="btn-review-done" class="btn btn-primary">Back to Deck</button>
+      </div>
+    </div>
+
+    <!-- ==================== MODAL: Create/Edit Deck ==================== -->
+    <div id="modal-deck" class="modal-overlay hidden">
+      <div class="modal">
+        <h2 id="modal-deck-title">New Deck</h2>
+        <form id="form-deck">
+          <div class="form-group">
+            <label for="input-deck-name">Deck Name</label>
+            <input type="text" id="input-deck-name" placeholder="e.g. Gesture Drawing" required>
+          </div>
+          <div class="form-group">
+            <label for="input-deck-folder">Folder Path</label>
+            <div class="folder-input-row">
+              <input type="text" id="input-deck-folder" placeholder="/Users/you/references/gestures" required>
+              <button type="button" id="btn-browse-folder" class="btn btn-secondary">Browse…</button>
+            </div>
+            <small class="form-hint">Absolute path to the folder containing reference images</small>
+          </div>
+          <div class="form-group" style="display: flex; gap: 16px;">
+            <div style="flex: 1;">
+              <label for="input-deck-new-limit">Max New Cards/Day</label>
+              <input type="number" id="input-deck-new-limit" min="0" value="20" required style="width: 100%;">
+            </div>
+            <div style="flex: 1;">
+              <label for="input-deck-review-limit">Max Reviews/Day</label>
+              <input type="number" id="input-deck-review-limit" min="0" value="200" required style="width: 100%;">
+            </div>
+          </div>
+          <div id="folder-error" class="form-error hidden"></div>
+          <div class="modal-actions">
+            <button type="button" id="btn-cancel-deck" class="btn btn-ghost">Cancel</button>
+            <button type="submit" class="btn btn-primary">Save</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- ==================== MODAL: Confirm Delete ==================== -->
+    <div id="modal-delete" class="modal-overlay hidden">
+      <div class="modal modal-small">
+        <h2>Delete Deck</h2>
+        <p>Are you sure you want to delete <strong id="delete-deck-name"></strong>? This will remove all review history for this deck.</p>
+        <div class="modal-actions">
+          <button id="btn-cancel-delete" class="btn btn-ghost">Cancel</button>
+          <button id="btn-confirm-delete" class="btn btn-danger">Delete</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== MODAL: Folder Browser ==================== -->
+    <div id="modal-folder-browser" class="modal-overlay hidden">
+      <div class="modal modal-folder">
+        <h2>Choose Folder</h2>
+        <div class="folder-browser">
+          <div class="folder-breadcrumb">
+            <span id="folder-browser-path" class="breadcrumb-path"></span>
+            <span id="folder-browser-img-count" class="breadcrumb-img-count"></span>
+          </div>
+          <div class="folder-browser-list-wrapper">
+            <div id="folder-browser-up" class="folder-item folder-item-up hidden">
+              📁 <span>..</span> (parent)
+            </div>
+            <div id="folder-browser-list" class="folder-browser-list">
+              <!-- Folders rendered by JS -->
+            </div>
+            <div id="folder-browser-empty" class="folder-browser-empty hidden">
+              No subfolders here.
+            </div>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" id="btn-cancel-browse" class="btn btn-ghost">Cancel</button>
+          <button type="button" id="btn-select-folder" class="btn btn-primary">Select This Folder</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== MODAL: Today's Reviewed ==================== -->
+    <div id="modal-todays-reviewed" class="modal-overlay hidden">
+      <div class="modal">
+        <h2>Today's Reviewed</h2>
+        <p id="todays-reviewed-summary" class="todays-summary"></p>
+        <div id="todays-reviewed-list" class="due-cards-list" style="max-height: 350px; overflow-y: auto;">
+          <!-- Rendered by JS -->
+        </div>
+        <div class="modal-actions">
+          <button type="button" id="btn-close-todays" class="btn btn-ghost">Close</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
