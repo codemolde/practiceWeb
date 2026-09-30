@@ -90,12 +90,19 @@
   - Session complete celebration & summary modal
   - JSON Data Export / Import backup
 - [x] **Living Atmosphere & Tactile Interactions**:
-  - Multi-layer drifting ambient aura orbs with soft radial gradients
-  - Interactive stardust / studio dust motes on Canvas with subtle mouse parallax
-  - Tactile spark micro-bursts on element clicks and hotkey presses
+  - Multi-layer drifting ambient aura orbs with soft radial gradients and glowing neon teal/cyan accents
+  - **Luminous Liquid Glass Bubbles**: 10-34px floating glassy spheres with multi-stop radial gradients, luminous glowing rims, specular glints, and pulse breathing
+  - **Radiant Stardust Motes**: 2-5px sparkling motes with soft outer auras and harmonic twinkling
+  - **Fluid Mouse Physics**: Real-time hydrodynamic wake swirl and proximity repulsion as the cursor moves through particles
+  - **Bioluminescent Constellation Web**: Connecting filaments between nearby bubbles and attraction beams to cursor
+  - **Shockwave Blasts on Click**: Expanding luminous shockwave rings that physically scatter nearby bubbles outward
+  - **Highlighting Click Sparkle Bursts**: 4-point rotating diamond star sparkles (`✦`) and fluid droplet trails on click
+  - **Fluid Expanding Button Ripples**: `.fluid-ripple` expanding glowing wave centered at click coordinates
+  - **Tri-Layer Synthesized Fluid Click Audio**: Fluid water droplet pop (resonant formant swoop) + crystalline glass chime snap + warm tactile sub-body with ±4% organic pitch randomization
+  - **Silky Fluid Hover Audio**: Feather-light water drop blips on buttons, cards, and toolbars
   - Confetti & celebration fireworks shower on session completion and Easy ratings
   - Dynamic 3D card tilt with specular spotlight mouse glare
-  - Synthesized Web Audio API sound FX (soft button clicks, card hover ticks, melodic rating tones, timer warnings, singing bowl gong, celebration fanfare)
+  - Synthesized Web Audio API sound FX (fluid button clicks, card hover ticks, melodic rating tones, timer warnings, singing bowl gong, celebration fanfare)
   - Dedicated sound toggle (`U` hotkey, header buttons) with persistent mute state
   - Living breathing streak flame animation (`🔥`)
   - Dynamic timer pulse (warning amber glow <= 10s, pulsing crimson danger <= 5s with audio ticks)

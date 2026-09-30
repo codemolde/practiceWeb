@@ -61,8 +61,15 @@ practiceWeb/
 ## Completed Upgrades: Living Atmosphere, Custom Wallpaper System & Artist QoL
 - [x] **Philosophy Alignment**: artist flow state, visual immersion, zero-friction shortcuts
 - [x] **Living Atmosphere & Rich Aesthetics**:
-  - Interactive stardust / dust mote particle canvas with mouse parallax
-  - Tactile spark micro-bursts on element clicks and hotkey presses
+  - Luminous 3D liquid glass bubbles (10-34px) with radial core gradients, glowing rims, and specular highlights
+  - Radiant stardust motes with soft outer auras and twinkling respiration
+  - Dynamic fluid mouse interactions: hydrodynamic wake swirl and proximity repulsion
+  - Bioluminescent connecting constellation filaments between nearby bubbles and mouse cursor
+  - Radial physical shockwaves that displace and scatter bubbles on click
+  - Highlighting click bursts with 4-point rotating diamond sparkle stars (`✦`) and fluid droplet trails
+  - Tactile fluid ripple animation (`.fluid-ripple`) on buttons, cards, and interactive controls
+  - Tri-layered synthesized Web Audio click sound: fluid water droplet pop (resonant formant sweep) + crystal glass snap (highpass harmonic chime) + warm tactile sub-body with ±4% organic pitch randomization
+  - Silky fluid water droplet hover sound for buttons, cards, and toolbars
   - Multi-layer drifting ambient aura orbs with soft radial gradients
   - Glowing glassmorphic cards with 3D tilt & dynamic specular mouse glare
   - Synthesized Web Audio API tactile feedback (clicks, hovers, rating chords, timer warnings, singing bowl chime, celebration fanfare)
@@ -86,7 +93,6 @@ practiceWeb/
   - Keyboard shortcuts cheat sheet modal (`?`)
   - Session complete celebration & summary modal
   - Backup & restore (Export/Import JSON)
-
 
 ---
 
@@ -122,4 +128,4 @@ Card: { imageId, imageName, difficulty, interval, easeFactor, dueDate, reviewCou
 
 ---
 
-*Last updated: 2026-09-22*
+*Last updated: 2026-09-30*
