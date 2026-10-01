@@ -197,6 +197,9 @@ body.has-wallpaper .wallpaper-overlay {
   inset: 0;
   z-index: 3000;
   pointer-events: none;
+  will-change: transform;
+  transform: translate3d(0, 0, 0);
+  backface-visibility: hidden;
 }
 
 #app {
@@ -345,6 +348,61 @@ body.has-wallpaper .wallpaper-overlay {
   background: var(--bg-card-hover);
   border-color: var(--accent);
   color: #fff;
+}
+
+/* 144Hz High-Refresh Badge & Status */
+.btn-hz-badge {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 8px 14px;
+  background: rgba(13, 17, 23, 0.75);
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  color: #38bdf8;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.16);
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.btn-hz-badge:hover {
+  background: rgba(56, 189, 248, 0.15);
+  border-color: rgba(56, 189, 248, 0.9);
+  box-shadow: 0 0 20px rgba(56, 189, 248, 0.4);
+  color: #ffffff;
+  transform: translateY(-1px);
+}
+
+.session-hz-pill {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.1);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  padding: 4px 10px;
+  border-radius: 20px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+}
+
+.hz-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #38bdf8;
+  box-shadow: 0 0 8px #38bdf8;
+  animation: hz-pulse 2s infinite ease-in-out;
+}
+
+@keyframes hz-pulse {
+  0%, 100% { opacity: 0.7; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1.25); box-shadow: 0 0 12px #38bdf8; }
 }
 
 .btn-ghost {

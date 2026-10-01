@@ -424,10 +424,27 @@ const ParticleFX = {
   animId: null,
   isPaused: false,
 
+  // 144Hz High-Refresh Engine Configuration & Live Metrics
+  targetHz: 144,
+  mode144Hz: true,
+  lastTime: 0,
+  frameCount: 0,
+  fpsTimer: 0,
+  currentFPS: 144,
+  highRateTimer: null,
+  detectedNative144: false,
+  sampleCount: 0,
+  sampleDeltaSum: 0,
+
   init() {
     this.canvas = document.getElementById('particle-canvas');
     if (!this.canvas) return;
-    this.ctx = this.canvas.getContext('2d');
+    // Request low-latency desynchronized context for instant 144Hz screen presentation
+    try {
+      this.ctx = this.canvas.getContext('2d', { alpha: true, desynchronized: true });
+    } catch (e) {
+      this.ctx = this.canvas.getContext('2d');
+    }
     this.resize();
 
     window.addEventListener('resize', () => this.resize());
@@ -474,21 +491,84 @@ const ParticleFX = {
 
     document.addEventListener('visibilitychange', () => {
       this.isPaused = document.hidden;
-      if (!this.isPaused && !this.animId) {
-        this.loop();
+      if (!this.isPaused) {
+        this.lastTime = performance.now();
+        if (this.mode144Hz && !this.detectedNative144) {
+          this.start144HzPump();
+        } else if (!this.animId) {
+          this.animId = requestAnimationFrame((ts) => this.loop(ts));
+        }
+      } else {
+        if (this.highRateTimer) {
+          clearInterval(this.highRateTimer);
+          this.highRateTimer = null;
+        }
       }
     });
 
-    this.loop();
+    this.lastTime = performance.now();
+    this.fpsTimer = performance.now();
+    this.animId = requestAnimationFrame((ts) => this.loop(ts));
   },
 
   resize() {
     if (!this.canvas) return;
     this.width = window.innerWidth;
     this.height = window.innerHeight;
-    this.canvas.width = this.width * (window.devicePixelRatio || 1);
-    this.canvas.height = this.height * (window.devicePixelRatio || 1);
-    this.ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+    const dpr = window.devicePixelRatio || 1;
+    this.canvas.width = this.width * dpr;
+    this.canvas.height = this.height * dpr;
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  },
+
+  updateHzDisplay() {
+    const btnText = document.getElementById('hz-text');
+    if (btnText) {
+      btnText.textContent = `${this.currentFPS} Hz`;
+    }
+    const sessionHz = document.getElementById('session-hz-text');
+    if (sessionHz) {
+      sessionHz.textContent = `${this.currentFPS} Hz`;
+    }
+  },
+
+  toggleHzMode() {
+    this.mode144Hz = !this.mode144Hz;
+    if (this.mode144Hz) {
+      if (!this.detectedNative144) {
+        this.start144HzPump();
+      }
+      if (typeof Toast !== 'undefined') {
+        Toast.show(`⚡ 144Hz High-Refresh Active • ${this.currentFPS} FPS`, 'info');
+      }
+    } else {
+      if (this.highRateTimer) {
+        clearInterval(this.highRateTimer);
+        this.highRateTimer = null;
+      }
+      if (!this.animId) {
+        this.animId = requestAnimationFrame((ts) => this.loop(ts));
+      }
+      if (typeof Toast !== 'undefined') {
+        Toast.show('Display VSync Active', 'info');
+      }
+    }
+    this.updateHzDisplay();
+  },
+
+  start144HzPump() {
+    if (this.highRateTimer) clearInterval(this.highRateTimer);
+    if (this.animId) {
+      cancelAnimationFrame(this.animId);
+      this.animId = null;
+    }
+    // High-resolution interval pump: ~6.944ms = 144Hz
+    const intervalMs = 1000 / 144;
+    this.highRateTimer = setInterval(() => {
+      if (!this.isPaused) {
+        this.loop(performance.now());
+      }
+    }, intervalMs);
   },
 
   _createParticle(isBubble = true) {
@@ -762,22 +842,60 @@ const ParticleFX = {
     ctx.fill();
   },
 
-  loop() {
+  loop(timestamp = performance.now()) {
     if (this.isPaused) {
       this.animId = null;
       return;
     }
 
-    // Smooth cursor movement & velocity damping
-    this.mouseX += (this.targetMouseX - this.mouseX) * 0.06;
-    this.mouseY += (this.targetMouseY - this.mouseY) * 0.06;
-    this.cursorVx *= 0.88;
-    this.cursorVy *= 0.88;
+    if (!this.lastTime) {
+      this.lastTime = timestamp;
+      this.fpsTimer = timestamp;
+    }
 
-    // Update trailing fluid cursor (viscous drag feel)
+    // Time elapsed since last frame (clamped between 1ms and 64ms for stability)
+    const deltaMs = Math.min(64, Math.max(1, timestamp - this.lastTime));
+    this.lastTime = timestamp;
+
+    // Detect if browser/monitor natively supports >= 120-144Hz rAF
+    if (this.sampleCount < 40) {
+      this.sampleCount++;
+      this.sampleDeltaSum += deltaMs;
+      if (this.sampleCount === 40) {
+        const avgDelta = this.sampleDeltaSum / 40;
+        this.detectedNative144 = avgDelta <= 9.5; // <= 9.5ms corresponds to >= 105Hz, typically 120/144Hz
+        // If display is 60Hz and 144Hz mode is requested, activate high-rate interval pump
+        if (!this.detectedNative144 && this.mode144Hz && !this.highRateTimer) {
+          this.start144HzPump();
+        }
+      }
+    }
+
+    // Measure live frame rate
+    this.frameCount++;
+    if (timestamp - this.fpsTimer >= 400) {
+      this.currentFPS = Math.round((this.frameCount * 1000) / (timestamp - this.fpsTimer));
+      this.frameCount = 0;
+      this.fpsTimer = timestamp;
+      this.updateHzDisplay();
+    }
+
+    // Delta-Time Factor: Normalized to 60fps baseline (16.6667ms).
+    // At 144Hz, deltaMs ≈ 6.944ms, so dt ≈ 0.41667.
+    const dt = deltaMs / 16.6667;
+
+    // Smooth cursor movement & velocity damping with exponential decay
+    const mouseLerp = 1 - Math.pow(1 - 0.06, dt);
+    this.mouseX += (this.targetMouseX - this.mouseX) * mouseLerp;
+    this.mouseY += (this.targetMouseY - this.mouseY) * mouseLerp;
+    this.cursorVx *= Math.pow(0.88, dt);
+    this.cursorVy *= Math.pow(0.88, dt);
+
+    // Update trailing fluid cursor with exponential lerp (feels liquid & responsive)
     if (this.cursorX > -1000) {
-      this.fluidCursorX += (this.cursorX - this.fluidCursorX) * 0.22;
-      this.fluidCursorY += (this.cursorY - this.fluidCursorY) * 0.22;
+      const fluidLerp = 1 - Math.pow(1 - 0.22, dt);
+      this.fluidCursorX += (this.cursorX - this.fluidCursorX) * fluidLerp;
+      this.fluidCursorY += (this.cursorY - this.fluidCursorY) * fluidLerp;
     }
 
     this.ctx.clearRect(0, 0, this.width, this.height);
@@ -789,8 +907,8 @@ const ParticleFX = {
     // 1. Render Expanding Fluid Wake Ripples shed by moving cursor
     for (let i = this.fluidWakes.length - 1; i >= 0; i--) {
       const w = this.fluidWakes[i];
-      w.r += w.speed;
-      w.alpha = (1 - w.r / w.maxR) * 0.32;
+      w.r += w.speed * dt;
+      w.alpha = Math.max(0, (1 - w.r / w.maxR) * 0.32);
       if (w.r >= w.maxR || w.alpha <= 0.005) {
         this.fluidWakes.splice(i, 1);
         continue;
@@ -851,16 +969,16 @@ const ParticleFX = {
           const overlap = minD - ddist;
           const nx = ddx / ddist;
           const ny = ddy / ddist;
-          // Soft elastic spring bounce
-          p1.vx -= nx * overlap * 0.035;
-          p1.vy -= ny * overlap * 0.035;
-          p2.vx += nx * overlap * 0.035;
-          p2.vy += ny * overlap * 0.035;
+          // Soft elastic spring bounce scaled by dt
+          p1.vx -= nx * overlap * 0.035 * dt;
+          p1.vy -= ny * overlap * 0.035 * dt;
+          p2.vx += nx * overlap * 0.035 * dt;
+          p2.vy += ny * overlap * 0.035 * dt;
           // Induce soft jelly wobble
           p1.wobbleAngle = Math.atan2(ny, nx);
           p2.wobbleAngle = Math.atan2(-ny, -nx);
-          p1.wobbleAmp = Math.min(0.38, p1.wobbleAmp + 0.12);
-          p2.wobbleAmp = Math.min(0.38, p2.wobbleAmp + 0.12);
+          p1.wobbleAmp = Math.min(0.38, p1.wobbleAmp + 0.12 * dt);
+          p2.wobbleAmp = Math.min(0.38, p2.wobbleAmp + 0.12 * dt);
         }
       }
     }
@@ -911,22 +1029,22 @@ const ParticleFX = {
           const ratio = 1 - dist / influenceR;
           // Soft sinusoidal spring repulsion (viscous cushion rather than hard kick)
           const springForce = Math.sin(ratio * Math.PI / 2) * 3.4;
-          p.vx += (dx / dist) * springForce;
-          p.vy += (dy / dist) * springForce;
+          p.vx += (dx / dist) * springForce * dt;
+          p.vy += (dy / dist) * springForce * dt;
 
           if (p.isBubble) {
             // Soft jelly squish against cursor cushion
             p.wobbleAngle = Math.atan2(dy, dx);
-            p.wobbleAmp = Math.min(0.44, p.wobbleAmp + ratio * 0.22);
+            p.wobbleAmp = Math.min(0.44, p.wobbleAmp + ratio * 0.22 * dt);
           }
 
           // Hydrodynamic wake suction and swirl behind moving cursor
           if (mouseSpeed > 0.5) {
             const wakeRatio = ratio * 0.75;
-            p.vx += this.cursorVx * 0.035 * wakeRatio;
-            p.vy += this.cursorVy * 0.035 * wakeRatio;
-            p.vx += (-dy / dist) * (this.cursorVx * 0.03) * wakeRatio;
-            p.vy += (dx / dist) * (this.cursorVy * 0.03) * wakeRatio;
+            p.vx += this.cursorVx * 0.035 * wakeRatio * dt;
+            p.vy += this.cursorVy * 0.035 * wakeRatio * dt;
+            p.vx += (-dy / dist) * (this.cursorVx * 0.03) * wakeRatio * dt;
+            p.vy += (dx / dist) * (this.cursorVy * 0.03) * wakeRatio * dt;
           }
 
           // Delicate bioluminescent attraction beam to cursor
@@ -941,15 +1059,16 @@ const ParticleFX = {
         }
       }
 
-      // Physics damping & return to natural float current
-      p.vx *= 0.94;
-      p.vy *= 0.94;
-      p.vx += (p.baseVx - p.vx) * 0.025;
-      p.vy += (p.baseVy - p.vy) * 0.025;
+      // Physics exponential damping & return to natural float current
+      p.vx *= Math.pow(0.94, dt);
+      p.vy *= Math.pow(0.94, dt);
+      const baseLerp = 1 - Math.pow(1 - 0.025, dt);
+      p.vx += (p.baseVx - p.vx) * baseLerp;
+      p.vy += (p.baseVy - p.vy) * baseLerp;
 
-      p.pulsePhase += p.pulseSpeed;
-      p.x += p.vx + Math.sin(p.pulsePhase) * 0.28;
-      p.y += p.vy;
+      p.pulsePhase += p.pulseSpeed * dt;
+      p.x += (p.vx + Math.sin(p.pulsePhase) * 0.28) * dt;
+      p.y += p.vy * dt;
 
       // Soft Bouncing & Deflection off Reference Photo Exclusion Zone
       if (exclusionRect) {
@@ -986,17 +1105,17 @@ const ParticleFX = {
             p.vy = Math.abs(p.vy || 1) * 1.1 + 0.4;
             if (p.isBubble) p.wobbleAngle = Math.PI / 2;
           }
-          if (p.isBubble) p.wobbleAmp = Math.min(0.45, p.wobbleAmp + 0.3);
+          if (p.isBubble) p.wobbleAmp = Math.min(0.45, p.wobbleAmp + 0.3 * dt);
         } else if (dist < pad) {
           // In the soft cushion zone around the reference photo: elastic spring bounce
           const overlap = pad - dist;
           const nx = diffX / dist;
           const ny = diffY / dist;
 
-          // Viscous cushion spring
+          // Viscous cushion spring scaled by dt
           const spring = (overlap / pad) * 1.8;
-          p.vx += nx * spring;
-          p.vy += ny * spring;
+          p.vx += nx * spring * dt;
+          p.vy += ny * spring * dt;
 
           // Velocity reflection with soft restitution
           const dot = p.vx * nx + p.vy * ny;
@@ -1011,7 +1130,7 @@ const ParticleFX = {
 
           if (p.isBubble) {
             p.wobbleAngle = Math.atan2(ny, nx);
-            p.wobbleAmp = Math.min(0.42, p.wobbleAmp + (overlap / pad) * 0.22);
+            p.wobbleAmp = Math.min(0.42, p.wobbleAmp + (overlap / pad) * 0.22 * dt);
           }
         }
       }
@@ -1041,8 +1160,8 @@ const ParticleFX = {
 
       if (p.isBubble) {
         // Soft Jelly Elastic Wobble & Lite Transparent Soap Bubble Rendering
-        p.wobblePhase += p.wobbleFreq;
-        p.wobbleAmp *= p.wobbleDamp;
+        p.wobblePhase += p.wobbleFreq * dt;
+        p.wobbleAmp *= Math.pow(p.wobbleDamp, dt);
         const squish = p.wobbleAmp * Math.sin(p.wobblePhase);
         const scaleMajor = Math.max(0.6, 1 + squish);
         const scaleMinor = Math.max(0.6, 1 - squish * 0.65); // Preserves bubble liquid volume
@@ -1089,7 +1208,7 @@ const ParticleFX = {
         const moteGrad = this.ctx.createRadialGradient(posX, posY, 0, posX, posY, p.radius * 2.2);
         moteGrad.addColorStop(0, 'rgba(255, 255, 255, 0.45)');
         moteGrad.addColorStop(0.4, `rgba(${p.color.r}, ${p.color.g}, ${p.color.b}, 0.28)`);
-        moteGrad.addColorStop(1, `rgba(${p.color.r}, ${p.color.g}, ${p.color.b}, 0)`);
+        moteGrad.addColorStop(1, `rgba(${p.color.r}, ${p.color.g}, ${p.color.b}, 0.0)`);
 
         this.ctx.beginPath();
         this.ctx.arc(posX, posY, p.radius * 2.2, 0, Math.PI * 2);
@@ -1101,8 +1220,8 @@ const ParticleFX = {
     // 6. Shockwave Rings
     for (let i = this.shockwaves.length - 1; i >= 0; i--) {
       const sw = this.shockwaves[i];
-      sw.r += sw.speed;
-      sw.alpha = (1 - sw.r / sw.maxR) * 0.82;
+      sw.r += sw.speed * dt;
+      sw.alpha = Math.max(0, (1 - sw.r / sw.maxR) * 0.82);
 
       if (sw.r >= sw.maxR || sw.alpha <= 0.01) {
         this.shockwaves.splice(i, 1);
@@ -1125,11 +1244,11 @@ const ParticleFX = {
       const b = this.bursts[i];
       b.prevX = b.x;
       b.prevY = b.y;
-      b.x += b.vx;
-      b.y += b.vy;
-      b.vy += b.gravity;
-      b.vx *= 0.97;
-      b.life -= b.decay;
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+      b.vy += b.gravity * dt;
+      b.vx *= Math.pow(0.97, dt);
+      b.life -= b.decay * dt;
 
       if (b.life <= 0) {
         this.bursts.splice(i, 1);
@@ -1142,12 +1261,12 @@ const ParticleFX = {
       this.ctx.strokeStyle = b.color;
 
       if (b.isStar) {
-        b.rot += b.rotSpeed;
+        b.rot += b.rotSpeed * dt;
         const outerR = b.radius * (0.4 + 0.6 * b.life);
         const innerR = outerR * 0.28;
         this._drawSparkleStar(this.ctx, b.x, b.y, outerR, innerR, b.rot);
       } else if (b.isConfetti) {
-        b.rot += b.rotSpeed;
+        b.rot += b.rotSpeed * dt;
         this.ctx.translate(b.x, b.y);
         this.ctx.rotate(b.rot);
         this.ctx.fillRect(-b.radius, -b.radius * 0.6, b.radius * 2, b.radius * 1.2);
@@ -1167,7 +1286,10 @@ const ParticleFX = {
       this.ctx.restore();
     }
 
-    this.animId = requestAnimationFrame(() => this.loop());
+    // If native 144Hz is active or interval pump is not driving the loop, schedule next rAF
+    if (!this.highRateTimer) {
+      this.animId = requestAnimationFrame((ts) => this.loop(ts));
+    }
   }
 };
 
@@ -2013,6 +2135,15 @@ const UI = {
     if (btnSound2) btnSound2.addEventListener('click', toggleSoundHandler);
     const btnSound3 = document.getElementById('btn-session-sound');
     if (btnSound3) btnSound3.addEventListener('click', toggleSoundHandler);
+
+    // 144Hz High-Refresh Engine Toggle
+    const btnHz = document.getElementById('btn-toggle-hz');
+    if (btnHz) {
+      btnHz.addEventListener('click', () => {
+        SoundFX.click();
+        ParticleFX.toggleHzMode();
+      });
+    }
 
     // Global tactile click sound and fluid ripple on interactive elements & background
     document.addEventListener('click', (e) => {
