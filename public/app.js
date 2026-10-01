@@ -549,6 +549,73 @@ const ParticleFX = {
     }
   },
 
+  // Reference Photo Exclusion Zone: dynamically detects active reference photo bounds
+  getExclusionRect() {
+    const sessionView = document.getElementById('view-session');
+    if (!sessionView || !sessionView.classList.contains('active')) {
+      return null;
+    }
+    const imgEl = document.getElementById('session-image');
+    if (imgEl && imgEl.naturalWidth > 0) {
+      const r = imgEl.getBoundingClientRect();
+      if (r.width > 30 && r.height > 30) {
+        return {
+          left: r.left,
+          top: r.top,
+          right: r.right,
+          bottom: r.bottom,
+          width: r.width,
+          height: r.height,
+          centerX: r.left + r.width / 2,
+          centerY: r.top + r.height / 2
+        };
+      }
+    }
+    const container = document.getElementById('session-image-container');
+    if (container) {
+      const r = container.getBoundingClientRect();
+      if (r.width > 40 && r.height > 40) {
+        return {
+          left: r.left + 16,
+          top: r.top + 24,
+          right: r.right - 16,
+          bottom: r.bottom - 24,
+          width: r.width - 32,
+          height: r.height - 48,
+          centerX: r.left + r.width / 2,
+          centerY: r.top + r.height / 2
+        };
+      }
+    }
+    return null;
+  },
+
+  // Immediately disperses bubbles outward toward margins when a reference photo is displayed
+  deflectFromReference() {
+    const rect = this.getExclusionRect();
+    if (!rect) return;
+    const cx = rect.centerX;
+    const cy = rect.centerY;
+    const halfW = rect.width / 2 + 35;
+    const halfH = rect.height / 2 + 35;
+
+    for (let i = 0; i < this.particles.length; i++) {
+      const p = this.particles[i];
+      const dx = p.x - cx;
+      const dy = p.y - cy;
+      if (Math.abs(dx) < halfW && Math.abs(dy) < halfH) {
+        const dirX = dx >= 0 ? 1 : -1;
+        p.vx = dirX * (Math.random() * 4.5 + 4.2);
+        p.vy = (Math.random() - 0.5) * 3.5;
+        if (p.isBubble) {
+          p.wobbleAngle = Math.atan2(p.vy, p.vx);
+          p.wobbleAmp = 0.45;
+        }
+      }
+    }
+    this.triggerShockwave(cx, cy, Math.max(halfW, halfH) * 1.05, 'rgba(56, 189, 248, ');
+  },
+
   // Shed a gentle expanding fluid ripple wake behind moving cursor
   emitFluidWake(x, y) {
     if (this.fluidWakes.length > 25) this.fluidWakes.shift();
@@ -717,6 +784,7 @@ const ParticleFX = {
 
     const hasCursor = this.cursorX > -1000 && this.cursorY > -1000;
     const mouseSpeed = Math.hypot(this.cursorVx, this.cursorVy);
+    const exclusionRect = this.getExclusionRect();
 
     // 1. Render Expanding Fluid Wake Ripples shed by moving cursor
     for (let i = this.fluidWakes.length - 1; i >= 0; i--) {
@@ -804,6 +872,15 @@ const ParticleFX = {
       for (let j = i + 1; j < this.particles.length; j += 2) {
         const p2 = this.particles[j];
         if (!p2.isBubble) continue;
+        // Don't draw filaments across or inside reference photo
+        if (exclusionRect) {
+          const midX = (p1.x + p2.x) / 2;
+          const midY = (p1.y + p2.y) / 2;
+          if (midX >= exclusionRect.left - 20 && midX <= exclusionRect.right + 20 &&
+              midY >= exclusionRect.top - 20 && midY <= exclusionRect.bottom + 20) {
+            continue;
+          }
+        }
         const ddx = p1.x - p2.x;
         const ddy = p1.y - p2.y;
         const ddist = Math.hypot(ddx, ddy);
@@ -874,10 +951,87 @@ const ParticleFX = {
       p.x += p.vx + Math.sin(p.pulsePhase) * 0.28;
       p.y += p.vy;
 
+      // Soft Bouncing & Deflection off Reference Photo Exclusion Zone
+      if (exclusionRect) {
+        const cushion = p.isBubble ? 24 : 14;
+        const pad = cushion + p.radius;
+        const clampedX = Math.max(exclusionRect.left, Math.min(exclusionRect.right, p.x));
+        const clampedY = Math.max(exclusionRect.top, Math.min(exclusionRect.bottom, p.y));
+        const diffX = p.x - clampedX;
+        const diffY = p.y - clampedY;
+        const dist = Math.hypot(diffX, diffY);
+
+        if (dist < 0.001) {
+          // Inside the reference photo bounds: gently pop to nearest outer perimeter
+          const toLeft = p.x - exclusionRect.left;
+          const toRight = exclusionRect.right - p.x;
+          const toTop = p.y - exclusionRect.top;
+          const toBottom = exclusionRect.bottom - p.y;
+          const minEdge = Math.min(toLeft, toRight, toTop, toBottom);
+
+          if (minEdge === toLeft) {
+            p.x = exclusionRect.left - pad;
+            p.vx = -Math.abs(p.vx || 1) * 1.1 - 0.4;
+            if (p.isBubble) p.wobbleAngle = Math.PI;
+          } else if (minEdge === toRight) {
+            p.x = exclusionRect.right + pad;
+            p.vx = Math.abs(p.vx || 1) * 1.1 + 0.4;
+            if (p.isBubble) p.wobbleAngle = 0;
+          } else if (minEdge === toTop) {
+            p.y = exclusionRect.top - pad;
+            p.vy = -Math.abs(p.vy || 1) * 1.1 - 0.4;
+            if (p.isBubble) p.wobbleAngle = -Math.PI / 2;
+          } else {
+            p.y = exclusionRect.bottom + pad;
+            p.vy = Math.abs(p.vy || 1) * 1.1 + 0.4;
+            if (p.isBubble) p.wobbleAngle = Math.PI / 2;
+          }
+          if (p.isBubble) p.wobbleAmp = Math.min(0.45, p.wobbleAmp + 0.3);
+        } else if (dist < pad) {
+          // In the soft cushion zone around the reference photo: elastic spring bounce
+          const overlap = pad - dist;
+          const nx = diffX / dist;
+          const ny = diffY / dist;
+
+          // Viscous cushion spring
+          const spring = (overlap / pad) * 1.8;
+          p.vx += nx * spring;
+          p.vy += ny * spring;
+
+          // Velocity reflection with soft restitution
+          const dot = p.vx * nx + p.vy * ny;
+          if (dot < 0) {
+            p.vx -= (1 + 0.65) * dot * nx;
+            p.vy -= (1 + 0.65) * dot * ny;
+          }
+
+          // Gentle position separation
+          p.x = clampedX + nx * pad;
+          p.y = clampedY + ny * pad;
+
+          if (p.isBubble) {
+            p.wobbleAngle = Math.atan2(ny, nx);
+            p.wobbleAmp = Math.min(0.42, p.wobbleAmp + (overlap / pad) * 0.22);
+          }
+        }
+      }
+
       // Screen boundary wrap
       if (p.y < -40) {
         p.y = this.height + 30;
-        p.x = Math.random() * this.width;
+        if (exclusionRect) {
+          // Spawn in the margins on the sides of the reference photo
+          const spawnLeft = Math.random() < 0.5;
+          if (spawnLeft && exclusionRect.left > 80) {
+            p.x = Math.random() * (exclusionRect.left - 30);
+          } else if (!spawnLeft && this.width - exclusionRect.right > 80) {
+            p.x = (exclusionRect.right + 30) + Math.random() * (this.width - exclusionRect.right - 30);
+          } else {
+            p.x = Math.random() * this.width;
+          }
+        } else {
+          p.x = Math.random() * this.width;
+        }
       }
       if (p.x < -40) p.x = this.width + 30;
       if (p.x > this.width + 40) p.x = -30;
@@ -2615,6 +2769,51 @@ const UI = {
 
     gridEl.innerHTML = cells.join('');
 
+    // Floating Unclipped Heatmap Tooltip (escapes overflow boundaries so top rows are never clipped)
+    let tooltip = document.getElementById('floating-heatmap-tooltip');
+    if (!tooltip) {
+      tooltip = document.createElement('div');
+      tooltip.id = 'floating-heatmap-tooltip';
+      tooltip.className = 'floating-heatmap-tooltip';
+      document.body.appendChild(tooltip);
+    }
+
+    if (!gridEl._hasTooltipListeners) {
+      gridEl._hasTooltipListeners = true;
+
+      const positionTooltip = (cell) => {
+        const text = cell.getAttribute('data-tooltip');
+        if (!text) {
+          tooltip.classList.remove('visible');
+          return;
+        }
+        tooltip.textContent = text;
+        const rect = cell.getBoundingClientRect();
+        // Flip below if cell is too close to top of viewport or container header
+        const shouldFlip = rect.top < 70;
+        if (shouldFlip) {
+          tooltip.classList.add('flipped');
+          tooltip.style.top = (rect.bottom + 8) + 'px';
+        } else {
+          tooltip.classList.remove('flipped');
+          tooltip.style.top = (rect.top - 8) + 'px';
+        }
+        const left = Math.max(75, Math.min(window.innerWidth - 75, rect.left + rect.width / 2));
+        tooltip.style.left = left + 'px';
+        tooltip.classList.add('visible');
+      };
+
+      gridEl.addEventListener('mouseover', (e) => {
+        const cell = e.target.closest('.heatmap-cell');
+        if (cell) positionTooltip(cell);
+      });
+
+      gridEl.addEventListener('mouseout', (e) => {
+        const cell = e.target.closest('.heatmap-cell');
+        if (cell) tooltip.classList.remove('visible');
+      });
+    }
+
     const totalWeeks = weekIndex;
     const cellSize = 16;
     monthsEl.innerHTML = '';
@@ -2627,6 +2826,13 @@ const UI = {
     });
 
     const scrollEl = gridEl.parentElement;
+    if (scrollEl && !scrollEl._hasTooltipScrollListener) {
+      scrollEl._hasTooltipScrollListener = true;
+      scrollEl.addEventListener('scroll', () => {
+        if (tooltip) tooltip.classList.remove('visible');
+      }, { passive: true });
+    }
+
     const todayCell = gridEl.querySelector('.today');
     if (todayCell && scrollEl) {
       const offset = todayCell.offsetLeft - scrollEl.clientWidth / 2;
@@ -2788,6 +2994,7 @@ const UI = {
     ArtistToolbox.reset();
     this.startTimerIfNeeded();
     this.showNextImage();
+    ParticleFX.deflectFromReference();
   },
 
   showNextImage() {
@@ -2810,12 +3017,18 @@ const UI = {
     ArtistToolbox.reset();
 
     const imgEl = document.getElementById('session-image');
+    imgEl.onload = () => {
+      ParticleFX.deflectFromReference();
+    };
     imgEl.src = SessionManager.getImageUrl(image.id);
     document.getElementById('session-image-name').textContent = image.name;
 
     document.getElementById('session-progress').textContent = `#${SessionManager.imagesShown}`;
 
     this.updateRatingIntervals();
+
+    // Deflect floating bubbles away from the center so artist has a completely clear view
+    ParticleFX.deflectFromReference();
 
     document.getElementById('btn-timer-pause').textContent = 'Pause';
     if (this.getTimerDuration() > 0 && TimerManager.isRunning()) {

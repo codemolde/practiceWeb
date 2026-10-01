@@ -1028,23 +1028,33 @@ kbd {
   z-index: 50;
 }
 
-.heatmap-cell[data-tooltip]:hover::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 50%;
-  transform: translateX(-50%);
-  background: #161b22;
+/* Floating Unclipped Heatmap Tooltip */
+.floating-heatmap-tooltip {
+  position: fixed;
+  background: rgba(13, 17, 23, 0.96);
   color: #f0f6fc;
   font-size: 11px;
   font-family: var(--font-mono);
-  padding: 5px 10px;
-  border: 1px solid var(--border);
+  padding: 6px 12px;
+  border: 1px solid rgba(88, 166, 255, 0.35);
   border-radius: 6px;
   white-space: nowrap;
-  z-index: 100;
   pointer-events: none;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  z-index: 10000;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.7), 0 0 12px rgba(56, 189, 248, 0.25);
+  transform: translate(-50%, -100%);
+  transition: opacity 0.12s ease;
+  opacity: 0;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.floating-heatmap-tooltip.flipped {
+  transform: translate(-50%, 0);
+}
+
+.floating-heatmap-tooltip.visible {
+  opacity: 1;
 }
 
 .heatmap-cell.g1 { background: #0e4429; }
