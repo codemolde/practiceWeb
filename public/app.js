@@ -424,6 +424,12 @@ const ParticleFX = {
   animId: null,
   isPaused: false,
 
+  // Celestial Star & Speed-Responsive Tail State
+  cursorTrail: [],
+  tailEmbers: [],
+  starAngle: 0,
+  smoothSpeed: 0,
+
   // 144Hz High-Refresh Engine Configuration & Live Metrics
   targetHz: 144,
   mode144Hz: true,
@@ -474,6 +480,9 @@ const ParticleFX = {
       this.cursorY = -9999;
       this.cursorVx = 0;
       this.cursorVy = 0;
+      this.smoothSpeed = 0;
+      this.cursorTrail = [];
+      this.tailEmbers = [];
     });
 
     // Generate responsive set of lite, soft bouncy bubbles & stardust motes
@@ -920,35 +929,187 @@ const ParticleFX = {
       this.ctx.stroke();
     }
 
-    // 2. Viscous Liquid Cursor Aura & Streamline Droplet
+    // 2. Luminous Celestial Star with Speed-Responsive Comet Tail & Stardust
     if (hasCursor) {
-      const dragDx = this.cursorX - this.fluidCursorX;
-      const dragDy = this.cursorY - this.fluidCursorY;
-      const dragDist = Math.hypot(dragDx, dragDy);
-      const dragAngle = Math.atan2(dragDy, dragDx);
-      const stretch = Math.min(2.2, 1 + dragDist / 20);
+      const instantSpeed = Math.hypot(this.cursorVx, this.cursorVy);
+      // Smooth the cursor speed with exponential response
+      this.smoothSpeed += (instantSpeed - this.smoothSpeed) * (1 - Math.pow(1 - 0.25, dt));
+      this.starAngle += (0.025 + Math.min(0.14, this.smoothSpeed * 0.006)) * dt;
+
+      // Dynamic trail length: scales up to 52 points at high speeds, contracts to 3 at rest
+      const maxTrailPoints = Math.min(52, Math.max(3, Math.floor(3 + this.smoothSpeed * 1.55)));
+      this.cursorTrail.unshift({ x: this.cursorX, y: this.cursorY, speed: this.smoothSpeed });
+      if (this.cursorTrail.length > maxTrailPoints) {
+        this.cursorTrail.length = maxTrailPoints;
+      }
+
+      // Dynamic head size/width: swells up to 18px at fast speeds, tapers down to 3.2px at rest
+      const headWidth = Math.min(18, Math.max(3.2, 3.2 + Math.pow(this.smoothSpeed, 0.72) * 1.35));
+
+      // Draw the trailing comet tail
+      const trail = this.cursorTrail;
+      if (trail.length >= 2) {
+        const leftPoints = [];
+        const rightPoints = [];
+
+        for (let i = 0; i < trail.length; i++) {
+          const progress = i / (trail.length - 1); // 0 at star head, 1 at tail tip
+          // Taper formula: smooth teardrop / comet taper curve
+          const w = headWidth * Math.pow(1 - progress, 1.25);
+
+          let dx = 0;
+          let dy = 0;
+          if (i === 0) {
+            dx = trail[0].x - trail[1].x;
+            dy = trail[0].y - trail[1].y;
+          } else if (i === trail.length - 1) {
+            dx = trail[i - 1].x - trail[i].x;
+            dy = trail[i - 1].y - trail[i].y;
+          } else {
+            dx = trail[i - 1].x - trail[i + 1].x;
+            dy = trail[i - 1].y - trail[i + 1].y;
+          }
+
+          const len = Math.hypot(dx, dy) || 1;
+          const nx = -dy / len;
+          const ny = dx / len;
+
+          leftPoints.push({ x: trail[i].x + nx * w, y: trail[i].y + ny * w });
+          rightPoints.push({ x: trail[i].x - nx * w, y: trail[i].y - ny * w });
+        }
+
+        // A. Outer Ethereal Glowing Comet Plume Ribbon
+        this.ctx.save();
+        this.ctx.beginPath();
+        this.ctx.moveTo(leftPoints[0].x, leftPoints[0].y);
+        for (let i = 1; i < leftPoints.length; i++) {
+          const prev = leftPoints[i - 1];
+          const curr = leftPoints[i];
+          const mx = (prev.x + curr.x) / 2;
+          const my = (prev.y + curr.y) / 2;
+          this.ctx.quadraticCurveTo(prev.x, prev.y, mx, my);
+        }
+        this.ctx.lineTo(trail[trail.length - 1].x, trail[trail.length - 1].y);
+        for (let i = rightPoints.length - 1; i >= 0; i--) {
+          const curr = rightPoints[i];
+          const next = i > 0 ? rightPoints[i - 1] : rightPoints[0];
+          const mx = (curr.x + next.x) / 2;
+          const my = (curr.y + next.y) / 2;
+          this.ctx.quadraticCurveTo(curr.x, curr.y, mx, my);
+        }
+        this.ctx.closePath();
+
+        const tailGrad = this.ctx.createLinearGradient(
+          trail[0].x, trail[0].y,
+          trail[trail.length - 1].x, trail[trail.length - 1].y
+        );
+        tailGrad.addColorStop(0, 'rgba(255, 255, 255, 0.85)');
+        tailGrad.addColorStop(0.18, 'rgba(56, 189, 248, 0.65)');
+        tailGrad.addColorStop(0.55, 'rgba(168, 85, 247, 0.40)');
+        tailGrad.addColorStop(0.85, 'rgba(244, 114, 182, 0.18)');
+        tailGrad.addColorStop(1, 'rgba(56, 189, 248, 0)');
+
+        this.ctx.fillStyle = tailGrad;
+        this.ctx.shadowColor = '#38bdf8';
+        this.ctx.shadowBlur = Math.min(24, 6 + this.smoothSpeed * 0.6);
+        this.ctx.fill();
+
+        // B. Sharp Intense Starlight Core Spine
+        this.ctx.beginPath();
+        this.ctx.moveTo(trail[0].x, trail[0].y);
+        for (let i = 1; i < trail.length; i++) {
+          const prev = trail[i - 1];
+          const curr = trail[i];
+          const mx = (prev.x + curr.x) / 2;
+          const my = (prev.y + curr.y) / 2;
+          this.ctx.quadraticCurveTo(prev.x, prev.y, mx, my);
+        }
+        const coreGrad = this.ctx.createLinearGradient(
+          trail[0].x, trail[0].y,
+          trail[trail.length - 1].x, trail[trail.length - 1].y
+        );
+        coreGrad.addColorStop(0, 'rgba(255, 255, 255, 0.95)');
+        coreGrad.addColorStop(0.35, 'rgba(224, 242, 254, 0.75)');
+        coreGrad.addColorStop(0.75, 'rgba(56, 189, 248, 0.35)');
+        coreGrad.addColorStop(1, 'rgba(192, 132, 252, 0)');
+
+        this.ctx.strokeStyle = coreGrad;
+        this.ctx.lineWidth = Math.max(1.4, headWidth * 0.35);
+        this.ctx.lineCap = 'round';
+        this.ctx.lineJoin = 'round';
+        this.ctx.stroke();
+        this.ctx.restore();
+      }
+
+      // C. Shed Stardust Embers from moving tail
+      if (this.smoothSpeed > 3.5 && Math.random() < 0.6) {
+        const emberSpread = headWidth * 0.8;
+        this.tailEmbers.push({
+          x: this.cursorX + (Math.random() - 0.5) * emberSpread,
+          y: this.cursorY + (Math.random() - 0.5) * emberSpread,
+          vx: -this.cursorVx * 0.12 + (Math.random() - 0.5) * 1.5,
+          vy: -this.cursorVy * 0.12 + (Math.random() - 0.5) * 1.5,
+          life: 1.0,
+          decay: 0.045 + Math.random() * 0.03,
+          radius: Math.random() * 2.2 + 1.2,
+          color: ['#ffffff', '#38bdf8', '#c084fc', '#fef08a'][Math.floor(Math.random() * 4)]
+        });
+      }
+
+      // D. Draw and update trailing Stardust Embers
+      for (let i = this.tailEmbers.length - 1; i >= 0; i--) {
+        const em = this.tailEmbers[i];
+        em.x += em.vx * dt;
+        em.y += em.vy * dt;
+        em.life -= em.decay * dt;
+        if (em.life <= 0) {
+          this.tailEmbers.splice(i, 1);
+          continue;
+        }
+        this.ctx.save();
+        this.ctx.globalAlpha = Math.max(0, em.life * 0.9);
+        this.ctx.fillStyle = em.color;
+        this.ctx.shadowColor = em.color;
+        this.ctx.shadowBlur = 6;
+        this.ctx.beginPath();
+        this.ctx.arc(em.x, em.y, em.radius * em.life, 0, Math.PI * 2);
+        this.ctx.fill();
+        this.ctx.restore();
+      }
+
+      // E. Draw Luminous Celestial Star at the Cursor Tip
+      const starOuterR = 8.5 + Math.min(11, Math.sqrt(this.smoothSpeed) * 1.85);
+      const starInnerR = starOuterR * 0.28;
 
       this.ctx.save();
-      this.ctx.translate(this.fluidCursorX, this.fluidCursorY);
-      this.ctx.rotate(dragAngle);
-      this.ctx.scale(stretch, 1 / Math.sqrt(stretch));
+      this.ctx.translate(this.cursorX, this.cursorY);
 
-      // Luminous fluid droplet halo
-      const curGrad = this.ctx.createRadialGradient(0, 0, 1, 0, 0, 11);
-      curGrad.addColorStop(0, 'rgba(255, 255, 255, 0.45)');
-      curGrad.addColorStop(0.35, 'rgba(56, 189, 248, 0.22)');
-      curGrad.addColorStop(0.8, 'rgba(168, 85, 247, 0.08)');
-      curGrad.addColorStop(1, 'rgba(56, 189, 248, 0)');
+      // Radiant Starlight Halo Aura
+      const starGlow = this.ctx.createRadialGradient(0, 0, 1, 0, 0, starOuterR * 2.2);
+      starGlow.addColorStop(0, 'rgba(255, 255, 255, 0.85)');
+      starGlow.addColorStop(0.25, 'rgba(56, 189, 248, 0.45)');
+      starGlow.addColorStop(0.65, 'rgba(192, 132, 252, 0.18)');
+      starGlow.addColorStop(1, 'rgba(56, 189, 248, 0)');
 
       this.ctx.beginPath();
-      this.ctx.arc(0, 0, 11, 0, Math.PI * 2);
-      this.ctx.fillStyle = curGrad;
+      this.ctx.arc(0, 0, starOuterR * 2.2, 0, Math.PI * 2);
+      this.ctx.fillStyle = starGlow;
       this.ctx.fill();
 
-      // Fluid glint core
+      // Primary Celestial 4-Point Star
+      this.ctx.fillStyle = '#ffffff';
+      this.ctx.shadowColor = '#38bdf8';
+      this.ctx.shadowBlur = Math.min(20, 8 + this.smoothSpeed * 0.5);
+      this._drawSparkleStar(this.ctx, 0, 0, starOuterR, starInnerR, this.starAngle);
+
+      // Secondary Complementary Diamond Sparkle (rotated 45 deg, softer)
+      this.ctx.fillStyle = 'rgba(192, 132, 252, 0.7)';
+      this._drawSparkleStar(this.ctx, 0, 0, starOuterR * 0.65, starInnerR * 0.55, this.starAngle + Math.PI / 4);
+
+      // Hot Liquid Core Glint
       this.ctx.beginPath();
-      this.ctx.arc(0, 0, 2.6, 0, Math.PI * 2);
-      this.ctx.fillStyle = 'rgba(255, 255, 255, 0.65)';
+      this.ctx.arc(0, 0, 2.5, 0, Math.PI * 2);
+      this.ctx.fillStyle = '#ffffff';
       this.ctx.fill();
 
       this.ctx.restore();
