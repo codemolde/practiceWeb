@@ -61,14 +61,14 @@ practiceWeb/
 ## Completed Upgrades: Living Atmosphere, Custom Wallpaper System & Artist QoL
 - [x] **Philosophy Alignment**: artist flow state, visual immersion, zero-friction shortcuts
 - [x] **Living Atmosphere & Rich Aesthetics**:
-  - Luminous 3D liquid glass bubbles (10-34px) with radial core gradients, glowing rims, and specular highlights
-  - Radiant stardust motes with soft outer auras and twinkling respiration
-  - Dynamic fluid mouse interactions: hydrodynamic wake swirl and proximity repulsion
-  - Bioluminescent connecting constellation filaments between nearby bubbles and mouse cursor
-  - Radial physical shockwaves that displace and scatter bubbles on click
+  - Ethereal, lite, and transparent soap bubbles (11-30px) with delicate iridescent rims and curved specular glints
+  - Bouncy & soft elastic jelly physics: bubbles squish into volume-preserving ellipses upon cursor approach, collisions, or shockwaves, bouncing and wobbling softly back into shape
+  - Soft bubble-to-bubble elastic collision & bouncing
+  - Fluid cursor mechanics: aerodynamic liquid droplet following the mouse with viscous fluid drag, plus expanding fluid micro-wake ripples (eddies) shed as the cursor travels through water
+  - Radial physical shockwaves that displace and softly deform bubbles on click
   - Highlighting click bursts with 4-point rotating diamond sparkle stars (`✦`) and fluid droplet trails
   - Tactile fluid ripple animation (`.fluid-ripple`) on buttons, cards, and interactive controls
-  - Tri-layered synthesized Web Audio click sound: fluid water droplet pop (resonant formant sweep) + crystal glass snap (highpass harmonic chime) + warm tactile sub-body with ±4% organic pitch randomization
+  - Robust Web Audio API fluid click sound: resonant water droplet bloop + crystal glass ping + warm tactile sub-body with async AudioContext unlocking and global background click playback
   - Silky fluid water droplet hover sound for buttons, cards, and toolbars
   - Multi-layer drifting ambient aura orbs with soft radial gradients
   - Glowing glassmorphic cards with 3D tilt & dynamic specular mouse glare

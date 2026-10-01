@@ -91,14 +91,15 @@
   - JSON Data Export / Import backup
 - [x] **Living Atmosphere & Tactile Interactions**:
   - Multi-layer drifting ambient aura orbs with soft radial gradients and glowing neon teal/cyan accents
-  - **Luminous Liquid Glass Bubbles**: 10-34px floating glassy spheres with multi-stop radial gradients, luminous glowing rims, specular glints, and pulse breathing
-  - **Radiant Stardust Motes**: 2-5px sparkling motes with soft outer auras and harmonic twinkling
-  - **Fluid Mouse Physics**: Real-time hydrodynamic wake swirl and proximity repulsion as the cursor moves through particles
+  - **Lite & Transparent Soap Bubbles**: 11-30px floating glassy membranes with crystal transparency (0.03-0.12 center alpha), delicate 1.0px iridescent rims, and specular crescent glints
+  - **Soft Jelly & Bouncy Elastic Deformation**: Bubbles squish into volume-preserving ellipses upon cursor proximity, mutual bubble collisions, or shockwaves, softly bouncing and wobbling back into shape
+  - **Fluid Cursor Mechanics**: Aerodynamic liquid droplet following mouse with viscous fluid drag, shedding delicate expanding fluid micro-wake ripples (eddies) as the cursor travels through water
+  - **Hydrodynamic Wake & Soft Repulsion**: Smooth sinusoidal spring cushion push and wake suction trailing the cursor
   - **Bioluminescent Constellation Web**: Connecting filaments between nearby bubbles and attraction beams to cursor
-  - **Shockwave Blasts on Click**: Expanding luminous shockwave rings that physically scatter nearby bubbles outward
+  - **Shockwave Blasts on Click**: Expanding luminous shockwave rings that physically scatter and softly deform nearby bubbles outward
   - **Highlighting Click Sparkle Bursts**: 4-point rotating diamond star sparkles (`✦`) and fluid droplet trails on click
   - **Fluid Expanding Button Ripples**: `.fluid-ripple` expanding glowing wave centered at click coordinates
-  - **Tri-Layer Synthesized Fluid Click Audio**: Fluid water droplet pop (resonant formant swoop) + crystalline glass chime snap + warm tactile sub-body with ±4% organic pitch randomization
+  - **Robust Synthesized Fluid Click Audio**: Resonant water droplet bloop + crystal glass ping + warm tactile sub-body with async AudioContext unlocking, clear volume, and global background click playback
   - **Silky Fluid Hover Audio**: Feather-light water drop blips on buttons, cards, and toolbars
   - Confetti & celebration fireworks shower on session completion and Easy ratings
   - Dynamic 3D card tilt with specular spotlight mouse glare
