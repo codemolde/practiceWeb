@@ -15,7 +15,7 @@ echo "Starting Art Practice server (PID: $SERVER_PID)..."
 sleep 1
 
 # Open in default browser
-open http://localhost:3000
+open  -a "Firefox" http://localhost:3000
 
 echo "Close this terminal window to stop the server."
 wait $SERVER_PID

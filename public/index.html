@@ -1,31 +1,117 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Art Practice Reference — Artist Study & SRS Drill</title>
-  <meta name="description" content="Distraction-free art practice and spaced repetition reference tool for artists, gesture sketchers, and figure studies.">
-  
+  <meta name="description"
+    content="Distraction-free art practice and spaced repetition reference tool for artists, gesture sketchers, and figure studies.">
+
+  <!-- Instant Desktop Environment Detection (macOS & Electron) -->
+  <script>
+    (function () {
+      try {
+        var isElectron = /Electron/i.test(navigator.userAgent) || window.location.search.indexOf('electron=1') !== -1;
+        var isMac = /Macintosh|Mac OS X/i.test(navigator.userAgent);
+        if (isElectron) {
+          document.documentElement.classList.add('is-electron');
+          if (isMac) document.documentElement.classList.add('is-mac');
+        }
+      } catch (e) { }
+    })();
+  </script>
+
   <!-- Modern Typography -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link
+    href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+    rel="stylesheet">
 
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=2.5">
+
+  <!-- SVG Filter Definitions for Notan, Silhouette & Posterization -->
+  <svg id="svg-filters" xmlns="http://www.w3.org/2000/svg" style="position:absolute;width:0;height:0;overflow:hidden"
+    aria-hidden="true">
+    <defs>
+      <!-- Notan: true 2-tone threshold — black/white value study -->
+      <filter id="filter-notan" color-interpolation-filters="sRGB" x="0" y="0" width="100%" height="100%">
+        <feColorMatrix type="matrix" values="0.2126 0.7152 0.0722 0 0
+                                             0.2126 0.7152 0.0722 0 0
+                                             0.2126 0.7152 0.0722 0 0
+                                             0      0      0      1 0" result="grey" />
+        <feComponentTransfer in="grey">
+          <feFuncR type="discrete" tableValues="0 1" />
+          <feFuncG type="discrete" tableValues="0 1" />
+          <feFuncB type="discrete" tableValues="0 1" />
+        </feComponentTransfer>
+      </filter>
+
+      <!-- Silhouette: Thresholding subject against background to test gesture clarity -->
+      <filter id="filter-silhouette" color-interpolation-filters="sRGB" x="0" y="0" width="100%" height="100%">
+        <feColorMatrix id="fe-silhouette-matrix" type="matrix" values="0.2126 0.7152 0.0722 0 0
+                                                                     0.2126 0.7152 0.0722 0 0
+                                                                     0.2126 0.7152 0.0722 0 0
+                                                                     0      0      0      1 0" result="grey" />
+        <feComponentTransfer in="grey" id="fe-silhouette-transfer">
+          <feFuncR id="fe-silhouette-r" type="linear" slope="280" intercept="-140" />
+          <feFuncG id="fe-silhouette-g" type="linear" slope="280" intercept="-140" />
+          <feFuncB id="fe-silhouette-b" type="linear" slope="280" intercept="-140" />
+        </feComponentTransfer>
+      </filter>
+
+      <!-- 3-Value Posterize Study: Light, Halftone, Shadow (Watts Atelier Foundation) -->
+      <filter id="filter-posterize-3" color-interpolation-filters="sRGB" x="0" y="0" width="100%" height="100%">
+        <feColorMatrix type="matrix" values="0.2126 0.7152 0.0722 0 0
+                                             0.2126 0.7152 0.0722 0 0
+                                             0.2126 0.7152 0.0722 0 0
+                                             0      0      0      1 0" result="grey" />
+        <feComponentTransfer in="grey">
+          <feFuncR type="discrete" tableValues="0 0.5 1" />
+          <feFuncG type="discrete" tableValues="0 0.5 1" />
+          <feFuncB type="discrete" tableValues="0 0.5 1" />
+        </feComponentTransfer>
+      </filter>
+
+      <!-- Dynamic Posterize Filter (2 to 6 Tonal Steps) -->
+      <filter id="filter-posterize" color-interpolation-filters="sRGB" x="0" y="0" width="100%" height="100%">
+        <feColorMatrix id="fe-posterize-matrix" type="matrix" values="0.2126 0.7152 0.0722 0 0
+                                                                     0.2126 0.7152 0.0722 0 0
+                                                                     0.2126 0.7152 0.0722 0 0
+                                                                     0      0      0      1 0" result="grey" />
+        <feComponentTransfer in="grey" id="fe-posterize-transfer">
+          <feFuncR id="fe-posterize-r" type="discrete" tableValues="0 0.5 1" />
+          <feFuncG id="fe-posterize-g" type="discrete" tableValues="0 0.5 1" />
+          <feFuncB id="fe-posterize-b" type="discrete" tableValues="0 0.5 1" />
+        </feComponentTransfer>
+      </filter>
+
+      <!-- Squint Blur: Form & mass check by stripping away high-frequency detail (edgeMode duplicate prevents dark border bleed) -->
+      <filter id="filter-squint" x="0" y="0" width="100%" height="100%">
+        <feGaussianBlur id="fe-squint-blur" stdDeviation="0" edgeMode="duplicate" />
+      </filter>
+
+      <!-- Tonal Steps: legacy 4-level posterize filter -->
+      <filter id="filter-tonal" color-interpolation-filters="sRGB" x="0" y="0" width="100%" height="100%">
+        <feColorMatrix type="matrix" values="0.2126 0.7152 0.0722 0 0
+                                             0.2126 0.7152 0.0722 0 0
+                                             0.2126 0.7152 0.0722 0 0
+                                             0      0      0      1 0" result="grey" />
+        <feComponentTransfer in="grey">
+          <feFuncR type="discrete" tableValues="0 0.33 0.66 1" />
+          <feFuncG type="discrete" tableValues="0 0.33 0.66 1" />
+          <feFuncB type="discrete" tableValues="0 0.33 0.66 1" />
+        </feComponentTransfer>
+      </filter>
+    </defs>
+  </svg>
 </head>
+
 <body>
   <!-- Dynamic Background Wallpaper System -->
   <div id="wallpaper-bg" class="wallpaper-bg"></div>
   <div id="wallpaper-overlay" class="wallpaper-overlay"></div>
-
-  <!-- Ambient Living Aura & Particle Canvas -->
-  <div id="ambient-aura" class="ambient-aura">
-    <div class="aura-orb orb-1"></div>
-    <div class="aura-orb orb-2"></div>
-    <div class="aura-orb orb-3"></div>
-    <div class="aura-orb orb-4"></div>
-  </div>
-  <canvas id="particle-canvas" class="particle-canvas"></canvas>
 
   <!-- Toast Notification HUD -->
   <div id="toast-container" class="toast-container" aria-live="polite"></div>
@@ -37,7 +123,15 @@
       <header class="app-header">
         <div class="brand-group">
           <div class="brand-badge">
-            <span class="brand-icon">🎨</span>
+            <span class="brand-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
+                <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
+                <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
+                <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
+                <path
+                  d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.563-2.512 5.563-5.563C22 6.5 17.5 2 12 2z" />
+              </svg></span>
             <span class="brand-sub">STUDIO</span>
           </div>
           <div class="brand-text">
@@ -47,33 +141,139 @@
         </div>
 
         <div class="header-actions">
-          <button id="btn-toggle-hz" class="btn btn-secondary btn-hz-badge" title="144Hz Ultra-Fluid Engine • Live refresh rate monitor (Click to inspect)">
-            <span class="hz-dot"></span> <span id="hz-text">144 Hz</span>
-          </button>
-          <button id="btn-toggle-sound" class="btn btn-secondary" title="Tactile Sound FX (Click to mute/unmute)">
-            <span class="btn-icon" id="sound-icon">🔊</span> <span id="sound-text">Sound</span>
-          </button>
-          <button id="btn-open-wallpaper" class="btn btn-secondary" title="Customize Background Wallpaper">
-            <span class="btn-icon">🖼️</span> Wallpaper
-          </button>
-          <button id="btn-open-backup" class="btn btn-secondary" title="Backup or Restore Data">
-            <span class="btn-icon">💾</span> Data
-          </button>
-          <button id="btn-open-shortcuts" class="btn btn-secondary" title="View Keyboard Shortcuts (?)">
-            <span class="btn-icon">⌨️</span> Hotkeys <kbd>?</kbd>
-          </button>
+          <div class="header-tools">
+            <button id="btn-toggle-sound" class="btn btn-secondary" title="Tactile Sound FX (Click to mute/unmute)">
+              <span class="btn-icon" id="sound-icon"><svg viewBox="0 0 24 24" width="14" height="14" fill="none"
+                  stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                  aria-hidden="true">
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                  <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                </svg></span> <span id="sound-text">Sound</span>
+            </button>
+            <button id="btn-open-wallpaper" class="btn btn-secondary" title="Customize Background Wallpaper">
+              <span class="btn-icon"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                  <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                  <polyline points="21 15 16 10 5 21"></polyline>
+                </svg></span> Wallpaper
+            </button>
+            <button id="btn-open-backup" class="btn btn-secondary" title="Backup or Restore Data">
+              <span class="btn-icon"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                  <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                  <polyline points="7 3 7 8 15 8"></polyline>
+                </svg></span> Data
+            </button>
+            <button id="btn-open-shortcuts" class="btn btn-secondary" title="View Keyboard Shortcuts (?)">
+              <span class="btn-icon"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect x="2" y="4" width="20" height="16" rx="2" ry="2"></rect>
+                  <line x1="6" y1="8" x2="6" y2="8"></line>
+                  <line x1="10" y1="8" x2="10" y2="8"></line>
+                  <line x1="14" y1="8" x2="14" y2="8"></line>
+                  <line x1="18" y1="8" x2="18" y2="8"></line>
+                  <line x1="6" y1="12" x2="6" y2="12"></line>
+                  <line x1="10" y1="12" x2="10" y2="12"></line>
+                  <line x1="14" y1="12" x2="14" y2="12"></line>
+                  <line x1="18" y1="12" x2="18" y2="12"></line>
+                  <line x1="7" y1="16" x2="17" y2="16"></line>
+                </svg></span> Hotkeys <kbd>?</kbd>
+            </button>
+          </div>
           <button id="btn-new-deck" class="btn btn-primary">
             <span class="btn-icon">＋</span> New Deck
           </button>
         </div>
       </header>
 
+      <!-- Daily Studio Overview -->
+      <section id="today-strip" class="today-strip studio-status-bar" aria-label="Today's practice overview">
+        <div class="today-cell stat-cell stat-due">
+          <svg class="stat-svg stat-svg-due atelier-due-icon" viewBox="48 72 48 140" width="14" height="14" fill="none"
+            aria-hidden="true">
+            <g id="layer1">
+              <path style="fill:#ff0000;fill-opacity:1;stroke-width:0.281001"
+                d="m 69.879012,182.04874 c -4.030391,-6.8687 -12.77236,-22.76319 -16.405374,-31.84578 -3.633015,-9.08259 -2.157124,-11.35319 2.497769,-16.12161 4.654894,-4.76842 12.488453,-12.03433 12.545142,-22.25236 0.05669,-10.21802 -7.663339,-23.387477 -11.693732,-30.199408 -4.030393,-6.81193 -4.370983,-7.26605 3.406125,-0.964888 7.777109,6.301163 23.671288,19.357096 27.815133,30.029196 4.143844,10.6721 -3.462655,18.95978 -9.309598,25.60145 -5.846943,6.64168 -9.934021,11.637 -10.671952,19.41405 -0.737931,7.77706 1.873254,18.33533 3.519476,24.69315 1.646222,6.35782 2.327401,8.51489 -1.702989,1.6462 z"
+                id="path1" transform="rotate(4.9450556,70.333789,142.50045)"></path>
+              <path style="fill:#1a1a1a;fill-opacity:1;stroke-width:0.281001"
+                d="m 69.879012,182.04874 c -4.030391,-6.8687 -12.77236,-22.76319 -16.405374,-31.84578 -3.633015,-9.08259 -2.157124,-11.35319 2.497769,-16.12161 4.654894,-4.76842 12.488453,-12.03433 12.545142,-22.25236 0.05669,-10.21802 -7.663339,-23.387477 -11.693732,-30.199408 -4.030393,-6.81193 -4.370983,-7.26605 3.406125,-0.964888 7.777109,6.301163 23.671288,19.357096 27.815133,30.029196 4.143844,10.6721 -3.462655,18.95978 -9.309598,25.60145 -5.846943,6.64168 -9.934021,11.637 -10.671952,19.41405 -0.737931,7.77706 1.873254,18.33533 3.519476,24.69315 1.646222,6.35782 2.327401,8.51489 -1.702989,1.6462 z"
+                id="path1-1" transform="matrix(0.63709831,0.0551233,-0.07473089,0.86371681,34.212727,13.611625)"></path>
+              <ellipse style="fill:#ff0000;fill-opacity:1;stroke-width:0.281001" id="path2" cx="85.079712"
+                cy="193.16653" rx="8.6852064" ry="9.0258026" transform="rotate(4.9450556)"></ellipse>
+              <ellipse style="fill:#1a1a1a;fill-opacity:1;stroke-width:0.197259" id="path2-0" cx="84.133904"
+                cy="194.31033" rx="6.3010321" ry="6.130734" transform="rotate(4.9450556)"></ellipse>
+            </g>
+          </svg>
+          <span class="today-value stat-value" id="today-due">0</span>
+          <span class="today-label stat-label">Due Today</span>
+        </div>
+        <div class="stat-divider" aria-hidden="true"></div>
+        <div class="today-cell stat-cell">
+          <svg class="stat-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 20h9"></path>
+            <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+          </svg>
+          <span class="today-value stat-value" id="today-practiced">0</span>
+          <span class="today-label stat-label">Practiced</span>
+        </div>
+        <div class="stat-divider" aria-hidden="true"></div>
+        <div class="today-cell stat-cell">
+          <svg class="atelier-flame-icon" viewBox="0 0 100 125" width="16" height="20" aria-hidden="true">
+            <defs>
+              <linearGradient id="flame-core-grad" x1="50%" y1="90%" x2="55%" y2="10%">
+                <stop offset="0%" stop-color="#FEF08A" />
+                <stop offset="35%" stop-color="#F59E0B" />
+                <stop offset="100%" stop-color="#EA580C" />
+              </linearGradient>
+              <radialGradient id="flame-inner-glow" cx="48%" cy="68%" r="38%">
+                <stop offset="0%" stop-color="rgba(254, 240, 138, 0.85)" />
+                <stop offset="100%" stop-color="rgba(245, 158, 11, 0)" />
+              </radialGradient>
+            </defs>
+            <path d="M26 98 C10 80 12 52 32 28 C28 18 28 10 29 4 C36 14 42 25 44 36 C30 55 22 76 26 98 Z"
+              fill="#27272A" />
+            <path d="M24 96 C15 72 28 42 62 2 C58 28 64 46 74 60 C55 82 40 96 24 96 Z" fill="url(#flame-core-grad)" />
+            <path
+              d="M24 96 C18 76 24 54 38 34 C34 52 34 66 36 78 C46 58 60 46 76 38 C82 28 84 18 83 8 C92 26 94 50 86 72 C72 88 48 102 24 96 Z"
+              fill="#3F3F46" />
+            <circle cx="48" cy="70" r="26" fill="url(#flame-inner-glow)" style="mix-blend-mode: screen;" />
+            <path
+              d="M32 104 C20 94 22 76 30 68 C29 78 36 86 46 84 C58 82 60 66 54 52 C68 62 76 80 68 98 C60 112 44 112 32 104 Z"
+              fill="#F4F4F0" />
+          </svg>
+          <span class="stat-value-group"><span class="today-value stat-value" id="today-streak">0</span><span
+              class="stat-unit">d</span></span>
+          <span class="today-label stat-label">Streak</span>
+        </div>
+        <div class="stat-divider" aria-hidden="true"></div>
+        <div class="today-cell stat-cell">
+          <svg class="stat-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+          </svg>
+          <span class="today-value stat-value" id="today-decks">0</span>
+          <span class="today-label stat-label">Decks</span>
+        </div>
+      </section>
+
       <!-- Search & Filter Bar -->
       <div class="deck-filter-bar">
         <div class="search-box">
-          <span class="search-icon">🔍</span>
+          <span class="search-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg></span>
           <input type="text" id="deck-search-input" placeholder="Search decks by name or path..." autocomplete="off">
-          <button id="btn-clear-search" class="btn-clear-search hidden" title="Clear search">✕</button>
+          <button id="btn-clear-search" class="btn-clear-search hidden" title="Clear search"><svg width="12" height="12"
+              viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+              stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg></button>
         </div>
         <div class="sort-box">
           <label for="deck-sort-select">Sort by:</label>
@@ -91,7 +291,12 @@
       </div>
 
       <div id="empty-state" class="empty-state hidden">
-        <div class="empty-state-illustration">🖌️</div>
+        <div class="empty-state-illustration"><svg width="48" height="48" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m9.06 11.9 8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08" />
+            <path
+              d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1.08 1.1 2.49 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02z" />
+          </svg></div>
         <h3>No Decks Found</h3>
         <p>Create your first reference deck or choose a folder to start practicing.</p>
         <button id="btn-empty-new-deck" class="btn btn-primary btn-large">+ Create New Deck</button>
@@ -113,41 +318,98 @@
         </div>
         <div class="deck-header-actions">
           <button id="btn-detail-sound" class="btn btn-ghost" title="Tactile Sound FX (Click to mute/unmute)">
-            <span class="btn-icon" id="detail-sound-icon">🔊</span> Sound
+            <span class="btn-icon" id="detail-sound-icon"><svg viewBox="0 0 24 24" width="14" height="14" fill="none"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                aria-hidden="true">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+              </svg></span> Sound
           </button>
-          <button id="btn-detail-wallpaper" class="btn btn-ghost" title="Customize Wallpaper">🖼️ Wallpaper</button>
+          <button id="btn-detail-wallpaper" class="btn btn-ghost" title="Customize Wallpaper"><span
+              class="btn-icon"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                <polyline points="21 15 16 10 5 21"></polyline>
+              </svg></span> Wallpaper</button>
           <button id="btn-edit-deck" class="btn btn-ghost">Edit</button>
           <button id="btn-delete-deck" class="btn btn-danger-ghost">Delete</button>
         </div>
       </header>
 
-      <div class="deck-stats-row">
-        <div class="stat-card">
-          <div class="stat-card-icon">📁</div>
+      <!-- Deck Detail Studio Status Bar -->
+      <div class="deck-stats-row studio-status-bar" id="deck-stats-row">
+        <div class="stat-card stat-cell">
+          <svg class="stat-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+            <circle cx="8.5" cy="8.5" r="1.5"></circle>
+            <polyline points="21 15 16 10 5 21"></polyline>
+          </svg>
           <span class="stat-value" id="stat-total">0</span>
           <span class="stat-label">Total Images</span>
         </div>
-        <div class="stat-card stat-due">
-          <div class="stat-card-icon">⚡</div>
+        <div class="stat-divider" aria-hidden="true"></div>
+        <div class="stat-card stat-cell stat-due">
+          <svg class="stat-svg stat-svg-due atelier-due-icon" viewBox="48 72 48 140" width="14" height="14" fill="none"
+            aria-hidden="true">
+            <g id="layer1">
+              <path style="fill:#ff0000;fill-opacity:1;stroke-width:0.281001"
+                d="m 69.879012,182.04874 c -4.030391,-6.8687 -12.77236,-22.76319 -16.405374,-31.84578 -3.633015,-9.08259 -2.157124,-11.35319 2.497769,-16.12161 4.654894,-4.76842 12.488453,-12.03433 12.545142,-22.25236 0.05669,-10.21802 -7.663339,-23.387477 -11.693732,-30.199408 -4.030393,-6.81193 -4.370983,-7.26605 3.406125,-0.964888 7.777109,6.301163 23.671288,19.357096 27.815133,30.029196 4.143844,10.6721 -3.462655,18.95978 -9.309598,25.60145 -5.846943,6.64168 -9.934021,11.637 -10.671952,19.41405 -0.737931,7.77706 1.873254,18.33533 3.519476,24.69315 1.646222,6.35782 2.327401,8.51489 -1.702989,1.6462 z"
+                id="path1" transform="rotate(4.9450556,70.333789,142.50045)"></path>
+              <path style="fill:#1a1a1a;fill-opacity:1;stroke-width:0.281001"
+                d="m 69.879012,182.04874 c -4.030391,-6.8687 -12.77236,-22.76319 -16.405374,-31.84578 -3.633015,-9.08259 -2.157124,-11.35319 2.497769,-16.12161 4.654894,-4.76842 12.488453,-12.03433 12.545142,-22.25236 0.05669,-10.21802 -7.663339,-23.387477 -11.693732,-30.199408 -4.030393,-6.81193 -4.370983,-7.26605 3.406125,-0.964888 7.777109,6.301163 23.671288,19.357096 27.815133,30.029196 4.143844,10.6721 -3.462655,18.95978 -9.309598,25.60145 -5.846943,6.64168 -9.934021,11.637 -10.671952,19.41405 -0.737931,7.77706 1.873254,18.33533 3.519476,24.69315 1.646222,6.35782 2.327401,8.51489 -1.702989,1.6462 z"
+                id="path1-1" transform="matrix(0.63709831,0.0551233,-0.07473089,0.86371681,34.212727,13.611625)"></path>
+              <ellipse style="fill:#ff0000;fill-opacity:1;stroke-width:0.281001" id="path2" cx="85.079712"
+                cy="193.16653" rx="8.6852064" ry="9.0258026" transform="rotate(4.9450556)"></ellipse>
+              <ellipse style="fill:#1a1a1a;fill-opacity:1;stroke-width:0.197259" id="path2-0" cx="84.133904"
+                cy="194.31033" rx="6.3010321" ry="6.130734" transform="rotate(4.9450556)"></ellipse>
+            </g>
+          </svg>
           <span class="stat-value" id="stat-due">0</span>
           <span class="stat-label">Due Today</span>
         </div>
-        <div class="stat-card">
-          <div class="stat-card-icon">✨</div>
+        <div class="stat-divider" aria-hidden="true"></div>
+        <div class="stat-card stat-cell">
+          <svg class="stat-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+            <polyline points="22 4 12 14.01 9 11.01"></polyline>
+          </svg>
           <span class="stat-value" id="stat-reviewed">0</span>
-          <span class="stat-label">Mastered / Reviewed</span>
+          <span class="stat-label">Mastered</span>
         </div>
-        <div class="stat-card">
-          <div class="stat-card-icon">🌱</div>
+        <div class="stat-divider" aria-hidden="true"></div>
+        <div class="stat-card stat-cell">
+          <svg class="stat-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 22v-7"></path>
+            <path d="M7 10a5 5 0 0 1 8 0c0 4-3 7-3 7s-3-3-3-7z"></path>
+            <path d="M12 15a5 5 0 0 0 5-5"></path>
+          </svg>
           <span class="stat-value" id="stat-new">0</span>
-          <span class="stat-label">Unseen Cards</span>
+          <span class="stat-label">Unseen</span>
         </div>
+      </div>
+
+      <!-- Web / Pinterest Clipper Bar -->
+      <div id="web-clipper-bar" class="web-clipper-bar">
+        <input type="url" id="input-clip-url"
+          placeholder="Paste Pinterest Pin link or direct image URL (https://...)..." autocomplete="off">
+        <button id="btn-clip-url" class="btn-secondary">＋ Save to Deck</button>
+        <span id="clip-status-msg"></span>
       </div>
 
       <!-- Timer Settings -->
       <div class="timer-settings">
         <div class="timer-settings-header">
-          <h3>⏱ Practice Timer</h3>
+          <h3><span class="section-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                aria-hidden="true">
+                <circle cx="12" cy="14" r="8" />
+                <line x1="12" y1="9" x2="12" y2="14" />
+                <line x1="12" y1="2" x2="12" y2="6" />
+              </svg></span> Practice Timer</h3>
           <span class="timer-hint">Auto-blurs reference when time ends to test recall</span>
         </div>
         <div class="timer-options">
@@ -171,8 +433,34 @@
           </label>
           <label class="timer-option custom-timer">
             <input type="radio" name="timer" value="custom"> Custom:
-            <input type="number" id="custom-timer-input" min="1" max="3600" placeholder="sec" class="custom-timer-field">
+            <input type="number" id="custom-timer-input" min="1" max="3600" placeholder="sec"
+              class="custom-timer-field">
           </label>
+        </div>
+      </div>
+
+      <!-- Sub-Deck Tagging & Focus Filters -->
+      <div class="deck-focus-section" id="deck-focus-section">
+        <div class="focus-section-header">
+          <div class="focus-title-group">
+            <span class="focus-icon"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path>
+                <line x1="7" y1="7" x2="7.01" y2="7"></line>
+              </svg></span>
+            <h3>Sub-Decks & Focus Filters</h3>
+            <span class="focus-hint">Practice specific topics without moving files on disk</span>
+          </div>
+          <button type="button" id="btn-clear-tag-filter" class="btn btn-ghost btn-small hidden">
+            <span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:2px;">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg></span> Clear Filter
+          </button>
+        </div>
+        <div class="focus-tags-bar" id="deck-focus-tags-bar">
+          <!-- Injected dynamically: All Cards + tagged sub-decks -->
         </div>
       </div>
 
@@ -188,6 +476,22 @@
         <button id="btn-free-study" class="btn btn-ghost btn-large btn-action-card">
           <span class="action-title">Free Study</span>
           <span class="action-count">(Endless shuffle)</span>
+        </button>
+      </div>
+
+      <!-- Session Options -->
+      <div class="session-options-bar">
+        <button type="button" id="btn-reflow-backlog" class="btn btn-ghost btn-small btn-reflow"
+          title="Load-balance overdue backlog across next 5 days">
+          <span class="btn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z" />
+              <path d="m2 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z" />
+              <path d="M7 21h10" />
+              <path d="M12 3v18" />
+              <path d="M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2" />
+            </svg></span> <span>Reflow Overdue Backlog</span> <span id="reflow-badge"
+            class="reflow-badge hidden">0</span>
         </button>
       </div>
 
@@ -250,8 +554,32 @@
             <span class="activity-stat-value" id="stat-longest-streak">0 days</span>
           </div>
           <div class="activity-stat">
+            <svg class="atelier-flame-icon" viewBox="0 0 100 125" width="16" height="20" aria-hidden="true">
+              <defs>
+                <linearGradient id="flame-core-grad-heatmap" x1="50%" y1="90%" x2="55%" y2="10%">
+                  <stop offset="0%" stop-color="#FEF08A" />
+                  <stop offset="35%" stop-color="#F59E0B" />
+                  <stop offset="100%" stop-color="#EA580C" />
+                </linearGradient>
+                <radialGradient id="flame-inner-glow-heatmap" cx="48%" cy="68%" r="38%">
+                  <stop offset="0%" stop-color="rgba(254, 240, 138, 0.85)" />
+                  <stop offset="100%" stop-color="rgba(245, 158, 11, 0)" />
+                </radialGradient>
+              </defs>
+              <path d="M26 98 C10 80 12 52 32 28 C28 18 28 10 29 4 C36 14 42 25 44 36 C30 55 22 76 26 98 Z"
+                fill="#27272A" />
+              <path d="M24 96 C15 72 28 42 62 2 C58 28 64 46 74 60 C55 82 40 96 24 96 Z"
+                fill="url(#flame-core-grad-heatmap)" />
+              <path
+                d="M24 96 C18 76 24 54 38 34 C34 52 34 66 36 78 C46 58 60 46 76 38 C82 28 84 18 83 8 C92 26 94 50 86 72 C72 88 48 102 24 96 Z"
+                fill="#3F3F46" />
+              <circle cx="48" cy="70" r="26" fill="url(#flame-inner-glow-heatmap)" style="mix-blend-mode: screen;" />
+              <path
+                d="M32 104 C20 94 22 76 30 68 C29 78 36 86 46 84 C58 82 60 66 54 52 C68 62 76 80 68 98 C60 112 44 112 32 104 Z"
+                fill="#F4F4F0" />
+            </svg>
             <span class="activity-stat-label">Current Streak:</span>
-            <span class="activity-stat-value" id="stat-current-streak">0 days 🔥</span>
+            <span class="activity-stat-value" id="stat-current-streak">0 days</span>
           </div>
         </div>
       </div>
@@ -268,115 +596,1111 @@
           <span id="session-mode-label" class="session-mode-badge"></span>
         </div>
         <div class="session-right-controls">
-          <div class="session-hz-pill" title="144Hz Fluid Motion">
-            <span class="hz-dot"></span> <span id="session-hz-text">144 Hz</span>
-          </div>
           <button id="btn-session-sound" class="btn btn-ghost btn-small" title="Toggle Sound [U]">
-            <span id="session-sound-icon">🔊</span>
+            <span id="session-sound-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+              </svg></span>
           </button>
           <div class="session-counter">
             <span id="session-progress">#1</span>
           </div>
-          <button id="btn-session-zen" class="btn btn-ghost btn-small" title="Toggle Zen / Fullscreen Mode [F]">
-            <span class="zen-icon">⛶</span> Zen
+          <button id="btn-session-pip" class="btn btn-ghost btn-small"
+            title="Always-on-Top Floating PiP Window (Draw over Photoshop / Blender) [V]">
+            <span class="pip-icon" id="session-pip-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="3" width="20" height="18" rx="2" />
+                <rect x="11" y="11" width="9" height="7" rx="1" />
+              </svg></span> <span id="session-pip-text">Float PiP</span>
+          </button>
+          <button id="btn-session-zen" class="btn btn-ghost btn-small" title="Toggle Fullscreen Zen Mode [F]">
+            <span class="zen-icon" id="session-zen-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+                <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
+                <path d="M3 16v3a2 2 0 0 0 2 2h3" />
+                <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+              </svg></span> <span id="session-zen-text">Fullscreen</span>
           </button>
         </div>
       </header>
 
-      <!-- Timer Display -->
-      <div id="timer-display" class="timer-display hidden">
-        <div class="timer-bar-container">
-          <div id="timer-bar" class="timer-bar"></div>
-        </div>
-        <span id="timer-text" class="timer-text">0:00</span>
-        <div class="timer-controls">
-          <button id="btn-timer-pause" class="btn btn-ghost btn-small" title="Pause / Resume [Space]">Pause</button>
-          <button id="btn-timer-reset" class="btn btn-ghost btn-small" title="Reset Timer">Reset</button>
-        </div>
-      </div>
-
-      <!-- Image Display & Artist Canvas -->
-      <div class="image-container" id="session-image-container">
-        
-        <!-- Artist Toolbar HUD -->
-        <div class="image-toolbar" id="session-image-toolbar">
-          <button id="btn-art-grayscale" class="btn btn-hud" title="Value Check (Grayscale) [G]">
-            <span>◐</span> Value
-          </button>
-          <button id="btn-art-grid" class="btn btn-hud" title="Proportion Grid Overlay [O]">
-            <span>⌗</span> Grid
-          </button>
-          <button id="btn-art-invert" class="btn btn-hud" title="Invert Colors (Silhouette Check) [I]">
-            <span>☯</span> Invert
-          </button>
-          <button id="btn-img-flip" class="btn btn-hud" title="Flip Horizontal [M]">
-            <span>⇄</span> Flip
-          </button>
-          <button id="btn-img-rotate" class="btn btn-hud" title="Rotate 90° [R]">
-            <span>⟳</span>
-          </button>
-          <div class="hud-divider"></div>
-          <button id="btn-img-zoom-in" class="btn btn-hud" title="Zoom In [+]">＋</button>
-          <button id="btn-img-zoom-out" class="btn btn-hud" title="Zoom Out [-]">－</button>
-          <button id="btn-img-zoom-reset" class="btn btn-hud" title="Reset Zoom [0]">1:1</button>
-          <button id="btn-img-fullscreen" class="btn btn-hud" title="Fullscreen [F]">⛶</button>
-        </div>
-
-        <!-- Proportion Grid Overlay (Toggleable) -->
-        <div id="image-grid-overlay" class="image-grid-overlay hidden">
-          <div class="grid-line grid-v1"></div>
-          <div class="grid-line grid-v2"></div>
-          <div class="grid-line grid-h1"></div>
-          <div class="grid-line grid-h2"></div>
-        </div>
-
-        <!-- Blur Overlay when timer ends -->
-        <div id="image-blur-overlay" class="image-blur-overlay hidden">
-          <div class="blur-card">
-            <div class="blur-bell">⏱</div>
-            <div class="blur-title">Time's Up!</div>
-            <p class="blur-prompt">Rate this reference to proceed to the next study.</p>
+      <!-- Session Workspace (Moved to floating PiP window when PiP is active) -->
+      <div id="session-workspace" class="session-workspace">
+        <!-- Native Electron Float Topbar (Draggable Region & Window Restore) -->
+        <div id="electron-float-bar" class="electron-float-bar" aria-label="Floating Window Controls">
+          <div class="float-drag-zone" title="Drag to move floating reference window">
+            <svg class="float-drag-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2" aria-hidden="true">
+              <circle cx="9" cy="12" r="1.5" />
+              <circle cx="9" cy="5" r="1.5" />
+              <circle cx="9" cy="19" r="1.5" />
+              <circle cx="15" cy="12" r="1.5" />
+              <circle cx="15" cy="5" r="1.5" />
+              <circle cx="15" cy="19" r="1.5" />
+            </svg>
+            <span class="float-bar-title">Art Reference</span>
+          </div>
+          <div class="float-bar-actions">
+            <button type="button" id="btn-electron-ghost" class="btn btn-hud-sub btn-float-ghost"
+              title="Toggle Ghost Mode: Click-Through Overlay [Cmd+Shift+G]">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M9 18h6" />
+                <path d="M10 22h4" />
+                <path
+                  d="M12 2a7 7 0 0 0-7 7c0 2.38 1.19 4.47 3 5.74V17a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-2.26c1.81-1.27 3-3.36 3-5.74a7 7 0 0 0-7-7Z" />
+              </svg>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M9 10h.01" />
+                <path d="M15 10h.01" />
+                <path d="M12 2a8 8 0 0 0-8 8v12l3-3 2.5 2.5L12 19l2.5 2.5L17 19l3 3V10a8 8 0 0 0-8-8z" />
+              </svg>
+              <span>Ghost</span>
+            </button>
+            <button type="button" id="btn-electron-unfloat" class="btn btn-hud-sub btn-float-unfloat"
+              title="Restore Full Studio Window [V]">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="15 3 21 3 21 9" />
+                <polyline points="9 21 3 21 3 15" />
+                <line x1="21" y1="3" x2="14" y2="10" />
+                <line x1="3" y1="21" x2="10" y2="14" />
+              </svg>
+              <span>Restore</span>
+            </button>
           </div>
         </div>
 
-        <!-- Reference Image Stage -->
-        <div class="image-stage" id="image-stage">
-          <img id="session-image" src="" alt="Reference Image" draggable="false">
+        <!-- Ghost Mode Hover-Restore HUD Strip (Hover or press Cmd+Shift+G to restore normal interaction) -->
+        <div id="ghost-mode-banner" class="ghost-mode-banner hidden"
+          title="Ghost Mode Active (Click-through enabled). Hover here or press Cmd+Shift+G to restore normal clicks.">
+          <span class="ghost-badge">👻 Ghost Mode Active</span>
+          <span class="ghost-badge"><svg class="ghost-badge-icon" width="13" height="13" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M9 10h.01" />
+              <path d="M15 10h.01" />
+              <path d="M12 2a8 8 0 0 0-8 8v12l3-3 2.5 2.5L12 19l2.5 2.5L17 19l3 3V10a8 8 0 0 0-8-8z" />
+            </svg>Ghost Mode Active</span>
+          <span class="ghost-hint">Cmd+Shift+G</span>
+          <button type="button" id="btn-exit-ghost-mode" class="btn btn-ghost-exit"
+            title="Restore Normal Mouse Interaction">Restore Clicks</button>
         </div>
 
-        <p id="session-image-name" class="image-name"></p>
+        <!-- Transient Bezel Opacity HUD (Controlled by global shortcut Cmd+Shift+Up/Down/O, auto-hides with zero buttons) -->
+        <div id="opacity-hud" class="opacity-hud hidden" aria-hidden="true">
+          <div class="opacity-hud-content">
+            <svg class="opacity-hud-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 10h.01"/><path d="M15 10h.01"/><path d="M12 2a8 8 0 0 0-8 8v12l3-3 2.5 2.5L12 19l2.5 2.5L17 19l3 3V10a8 8 0 0 0-8-8z"/></svg>
+            <div class="opacity-hud-meta">
+              <span class="opacity-hud-title">Opacity</span>
+              <span id="opacity-hud-percent" class="opacity-hud-percent">40%</span>
+            </div>
+          </div>
+          <div class="opacity-hud-track">
+            <div id="opacity-hud-fill" class="opacity-hud-fill" style="width: 40%"></div>
+          </div>
+          <span class="opacity-hud-shortcut-hint">Cmd+Shift+Up / Down • Cmd+Shift+O</span>
+        </div>
+
+        <!-- Timer Display -->
+        <div id="timer-display" class="timer-display hidden">
+          <div class="timer-bar-container">
+            <div id="timer-bar" class="timer-bar"></div>
+          </div>
+          <span id="timer-text" class="timer-text">0:00</span>
+          <div class="timer-controls">
+            <button id="btn-timer-pause" class="btn btn-ghost btn-small" title="Pause / Resume [Space]">Pause</button>
+            <button id="btn-timer-reset" class="btn btn-ghost btn-small" title="Reset Timer">Reset</button>
+          </div>
+        </div>
+
+        <!-- Image Display & Artist Canvas -->
+        <div class="image-container" id="session-image-container">
+
+          <!-- Artist HUD Dock: Little Arrow Toggle + Filter Controls + Categorized Toolbar -->
+          <div class="image-hud-dock" id="image-hud-dock">
+            <!-- Dock Arrow Toggle Button (macOS Studio Dock style: click brings it up) -->
+            <button type="button" id="btn-dock-toggle" class="dock-toggle-tab" title="Toggle Artist Tools"
+              aria-label="Toggle Artist Tools">
+              <svg class="dock-arrow-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="15 18 9 12 15 6"></polyline>
+              </svg>
+              <span class="dock-toggle-label">Tools</span>
+            </button>
+
+            <!-- Dynamic Filter Controls Dock (for Silhouette threshold & Posterize steps) -->
+            <div class="filter-controls-dock hidden" id="filter-controls-dock">
+              <!-- Silhouette Controls Subpanel -->
+              <div id="panel-silhouette-controls" class="filter-subpanel hidden">
+                <div class="subpanel-header">
+                  <div class="subpanel-title-group">
+                    <span class="subpanel-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+                        <circle cx="12" cy="7" r="4" />
+                      </svg></span>
+                    <span class="subpanel-title">Gesture Silhouette</span>
+                    <span class="subpanel-badge">Threshold: <strong id="val-silhouette-thresh">50%</strong></span>
+                  </div>
+                  <div class="subpanel-actions">
+                    <button type="button" id="btn-silhouette-invert" class="btn btn-hud-sub"
+                      title="Flip Silhouette (Dark figure on light BG vs Light figure on dark BG)">
+                      <span>⇄</span> Invert
+                    </button>
+                    <button type="button" id="btn-silhouette-reset" class="btn btn-hud-sub"
+                      title="Reset threshold to 50%">
+                      <span>↺</span> 50%
+                    </button>
+                  </div>
+                </div>
+                <div class="subpanel-body">
+                  <div class="filter-slider-row">
+                    <span class="slider-end-label">Clear BG</span>
+                    <input type="range" id="slider-silhouette-threshold" min="5" max="95" value="50" step="1"
+                      class="hud-slider" title="Silhouette Threshold (Gesture separation)">
+                    <span class="slider-end-label">Isolate Figure</span>
+                  </div>
+                  <div class="subpanel-hint">Thresholds subject against background to test gesture line of action and
+                    pose readability</div>
+                </div>
+              </div>
+
+              <!-- Posterize Controls Subpanel -->
+              <div id="panel-posterize-controls" class="filter-subpanel hidden">
+                <div class="subpanel-header">
+                  <div class="subpanel-title-group">
+                    <span class="subpanel-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polygon points="12 2 22 12 12 22 2 12 12 2" />
+                      </svg></span>
+                    <span class="subpanel-title">Tonal Posterize</span>
+                    <span class="subpanel-badge"><strong id="val-posterize-steps">3</strong> Tonal Steps</span>
+                  </div>
+                  <div class="subpanel-presets">
+                    <button type="button" id="btn-posterize-preset-3" class="btn-step-pill active"
+                      title="3 Tonal Steps: Light · Halftone · Shadow (Atelier Foundation)">3 Steps</button>
+                    <button type="button" id="btn-posterize-preset-4" class="btn-step-pill"
+                      title="4 Tonal Steps: Light · Halftone · Core Shadow · Occlusion">4 Steps</button>
+                  </div>
+                </div>
+                <div class="subpanel-body">
+                  <div class="filter-slider-row">
+                    <span class="slider-step-indicator">2</span>
+                    <input type="range" id="slider-posterize-steps" min="2" max="6" value="3" step="1"
+                      class="hud-slider" title="Posterize Steps (Tonal mapping)">
+                    <span class="slider-step-indicator">6</span>
+                  </div>
+                  <div class="tonal-chips-container" id="posterize-tonal-chips">
+                    <!-- Dynamic tonal step chips injected by JS -->
+                  </div>
+                </div>
+              </div>
+
+              <!-- Squint Blur Controls Subpanel -->
+              <div id="panel-squint-controls" class="filter-subpanel hidden">
+                <div class="subpanel-header">
+                  <div class="subpanel-title-group">
+                    <span class="subpanel-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6-10-6-10-6Z" />
+                        <circle cx="12" cy="12" r="3" fill="currentColor" stroke="none" />
+                        <path d="M3 3l18 18" />
+                      </svg></span>
+                    <span class="subpanel-title">Squint Blur</span>
+                    <span class="subpanel-badge">Radius: <strong id="val-squint-radius">6px</strong></span>
+                  </div>
+                  <div class="subpanel-actions">
+                    <button type="button" id="btn-squint-preset-light" class="btn btn-hud-sub"
+                      title="Light blur (3px)">3px</button>
+                    <button type="button" id="btn-squint-preset-medium" class="btn btn-hud-sub"
+                      title="Medium blur (8px)">8px</button>
+                    <button type="button" id="btn-squint-preset-heavy" class="btn btn-hud-sub"
+                      title="Heavy blur (16px)">16px</button>
+                    <button type="button" id="btn-squint-reset" class="btn btn-hud-sub" title="Reset to 6px">↺
+                      6px</button>
+                  </div>
+                </div>
+                <div class="subpanel-body">
+                  <div class="filter-slider-row">
+                    <span class="slider-end-label">1px</span>
+                    <input type="range" id="slider-squint-radius" min="1" max="24" value="6" step="1" class="hud-slider"
+                      title="Squint Blur Radius (1px to 24px)">
+                    <span class="slider-end-label">24px</span>
+                  </div>
+                  <div class="subpanel-hint">Softens high-frequency edges so you can evaluate big form masses and value
+                    relationships without hard thresholding</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Vertical Categorized Artist Toolbar -->
+            <div class="image-toolbar vertical-toolbar" id="session-image-toolbar" data-active-cat="all">
+              <!-- Category Segmented Switcher -->
+              <div class="dock-category-bar" id="dock-category-bar" role="tablist">
+                <button type="button" class="dock-cat-tab active" data-cat="all" role="tab"
+                  title="Show All Tools">All</button>
+                <button type="button" class="dock-cat-tab" data-cat="tonal" role="tab"
+                  title="Tonal Analysis: Value [G], Notan [N], Silhouette [L], Posterize [P], Squint [S], Invert [I]">
+                  <span>Tonal</span><span class="cat-indicator-dot hidden" aria-hidden="true"></span>
+                </button>
+                <button type="button" class="dock-cat-tab" data-cat="critique" role="tab"
+                  title="Self-Critique: Overlay [K], History [Y], Palette [E], Focal Crop [C], Tag [T]">
+                  <span>Critique</span><span class="cat-indicator-dot hidden" aria-hidden="true"></span>
+                </button>
+                <button type="button" class="dock-cat-tab" data-cat="canvas" role="tab"
+                  title="Canvas & View: Plumb [U], Grid [O], Flip [M], Rotate [R], Zoom">
+                  <span>Canvas</span><span class="cat-indicator-dot hidden" aria-hidden="true"></span>
+                </button>
+              </div>
+
+              <!-- Categorized Tools Groups -->
+              <div class="dock-tools-container" id="dock-tools-container">
+                <!-- Group 1: Tonal Analysis -->
+                <div class="dock-tool-group" data-cat="tonal" id="group-cat-tonal">
+                  <div class="dock-group-heading"><span>Tonal Analysis</span></div>
+                  <div class="dock-group-grid">
+                    <button id="btn-art-grayscale" class="btn btn-hud" title="Value Check (Grayscale) [G]">
+                      <span class="hud-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <circle cx="12" cy="12" r="10" />
+                          <path d="M12 2a10 10 0 0 0 0 20Z" fill="currentColor" />
+                        </svg></span> <span class="hud-label">Value</span>
+                    </button>
+                    <button id="btn-art-notan" class="btn btn-hud" title="Notan Mode — 2-Tone Value Study [N]">
+                      <span class="hud-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <circle cx="12" cy="12" r="10" />
+                          <path d="M12 2a10 10 0 0 1 0 20Z" fill="currentColor" />
+                        </svg></span> <span class="hud-label">Notan</span>
+                    </button>
+                    <button id="btn-art-silhouette" class="btn btn-hud"
+                      title="Silhouette Mode — Gesture Clarity Threshold [L]">
+                      <span class="hud-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+                          <circle cx="12" cy="7" r="4" />
+                        </svg></span> <span class="hud-label">Silhouette</span>
+                    </button>
+                    <button id="btn-art-posterize" class="btn btn-hud" title="Posterize Mode — 3-4 Tonal Steps [P]">
+                      <span class="hud-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <polygon points="12 2 22 12 12 22 2 12 12 2" />
+                        </svg></span> <span class="hud-label">Posterize</span>
+                    </button>
+                    <button id="btn-art-squint" class="btn btn-hud"
+                      title="Squint Blur — strip high-frequency detail for big form mass check [S]">
+                      <span class="hud-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6-10-6-10-6Z" />
+                          <circle cx="12" cy="12" r="3" fill="currentColor" stroke="none" />
+                          <path d="M3 3l18 18" />
+                        </svg></span> <span class="hud-label">Squint</span>
+                    </button>
+                    <button id="btn-art-invert" class="btn btn-hud" title="Invert Colors (Silhouette Check) [I]">
+                      <span class="hud-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <circle cx="12" cy="12" r="10" />
+                          <path d="M12 2a10 10 0 0 0 0 20Z" fill="currentColor" />
+                        </svg></span> <span class="hud-label">Invert</span>
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Group 2: Critique & Study -->
+                <div class="dock-tool-group" data-cat="critique" id="group-cat-critique">
+                  <div class="dock-group-heading"><span>Critique & Study</span></div>
+                  <div class="dock-group-grid">
+                    <button id="btn-art-sketch" class="btn btn-hud"
+                      title="Onion-Skin Sketch Overlay & Critique [K] (Paste Cmd+V)">
+                      <span class="hud-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <polygon points="12 2 2 7 12 12 22 7 12 2" />
+                          <polyline points="2 17 12 22 22 17" />
+                          <polyline points="2 12 12 17 22 12" />
+                        </svg></span> <span class="hud-label">Overlay</span>
+                    </button>
+                    <button id="btn-art-history" class="btn btn-hud" title="Visual History & Past Attempts [Y]">
+                      <span class="hud-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <circle cx="12" cy="12" r="10" />
+                          <polyline points="12 6 12 12 16 14" />
+                          <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                          <polyline points="3 3 3 8 8 8" />
+                        </svg></span> <span class="hud-label">History</span> <span id="history-attempts-badge"
+                        class="hud-badge hidden">0</span>
+                    </button>
+                    <button id="btn-art-palette" class="btn btn-hud"
+                      title="Dominant Palette Swatches & Live Eyedropper [E]">
+                      <span class="hud-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
+                          <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
+                          <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
+                          <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
+                          <path
+                            d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.563-2.512 5.563-5.563C22 6.5 17.5 2 12 2z" />
+                        </svg></span> <span class="hud-label">Palette</span>
+                    </button>
+                    <button id="btn-art-crop" class="btn btn-hud"
+                      title="Smart Crop / Create Focal Point Child Card [C]">
+                      <span class="hud-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M6 2v14a2 2 0 0 0 2 2h14" />
+                          <path d="M18 22V8a2 2 0 0 0-2-2H2" />
+                        </svg></span> <span class="hud-label">Crop</span>
+                    </button>
+                    <button id="btn-art-tag" class="btn btn-hud"
+                      title="Quick Tag Card (hands, foreshortening, lighting, leech) [T]">
+                      <span class="hud-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
+                          <line x1="7" y1="7" x2="7.01" y2="7" />
+                        </svg></span> <span class="hud-label">Tag</span>
+                    </button>
+                    <input type="file" id="sketch-file-input" accept="image/*" class="hidden">
+                  </div>
+                </div>
+
+                <!-- Group 3: Canvas & View -->
+                <div class="dock-tool-group" data-cat="canvas" id="group-cat-canvas">
+                  <div class="dock-group-heading"><span>Canvas & View</span></div>
+                  <div class="dock-group-grid">
+                    <button id="btn-art-plumb" class="btn btn-hud"
+                      title="Plumb-Line & Angle Measurement [U] (or Shift+Drag on stage)">
+                      <span class="hud-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+                          <line x1="12" y1="9" x2="12" y2="13" />
+                          <circle cx="12" cy="17" r="1" fill="currentColor" />
+                        </svg></span> <span class="hud-label">Plumb</span> <span id="plumb-count-badge"
+                        class="hud-badge hidden">0</span>
+                    </button>
+                    <button id="btn-art-grid" class="btn btn-hud"
+                      title="Proportion Grid — click to cycle 3×3 / 4×4 / 8×8 / Diagonals / Off [O]">
+                      <span class="hud-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <rect x="3" y="3" width="18" height="18" rx="2" />
+                          <line x1="3" y1="9" x2="21" y2="9" />
+                          <line x1="3" y1="15" x2="21" y2="15" />
+                          <line x1="9" y1="3" x2="9" y2="21" />
+                          <line x1="15" y1="3" x2="15" y2="21" />
+                        </svg></span> <span class="hud-label">Grid</span> <span id="grid-mode-label"
+                        class="hud-badge hidden"></span>
+                    </button>
+                    <button id="btn-img-flip" class="btn btn-hud" title="Flip Horizontal [M]">
+                      <span class="hud-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <polyline points="16 3 21 8 16 13" />
+                          <line x1="21" y1="8" x2="9" y2="8" />
+                          <polyline points="8 21 3 16 8 11" />
+                          <line x1="3" y1="16" x2="15" y2="16" />
+                        </svg></span> <span class="hud-label">Flip</span>
+                    </button>
+                    <button id="btn-img-rotate" class="btn btn-hud" title="Rotate 90° [R]">
+                      <span class="hud-icon">⟳</span> <span class="hud-label">Rotate</span>
+                    </button>
+                    <div class="hud-zoom-row">
+                      <button id="btn-img-zoom-out" class="btn btn-hud" title="Zoom Out [-]">－</button>
+                      <button id="btn-img-zoom-reset" class="btn btn-hud btn-hud-zoom"
+                        title="Fit to screen / Reset zoom [0] — double-click the image to zoom in">100%</button>
+                      <button id="btn-img-zoom-in" class="btn btn-hud" title="Zoom In [+]">＋</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Blur Overlay when timer ends -->
+          <div id="image-blur-overlay" class="image-blur-overlay hidden">
+            <div class="blur-pulse-ring"></div>
+            <div class="blur-pulse-ring blur-pulse-ring-2"></div>
+            <div class="blur-card">
+              <div class="blur-bell"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="14" r="8" />
+                  <line x1="12" y1="9" x2="12" y2="14" />
+                  <line x1="12" y1="2" x2="12" y2="6" />
+                </svg></div>
+              <div class="blur-title">Time's Up!</div>
+              <p class="blur-prompt">Rate this reference to proceed to the next study.</p>
+              <div class="blur-hint-keys">
+                <kbd>1</kbd> Hard &nbsp;·&nbsp; <kbd>2</kbd> Medium &nbsp;·&nbsp; <kbd>3</kbd> Easy
+              </div>
+
+              <!-- Self-Critique Sketch Overlay Callout -->
+              <div class="blur-critique-section" id="blur-critique-section">
+                <div class="blur-critique-divider"><span>Self-Critique Proportions</span></div>
+                <div class="blur-critique-actions">
+                  <button type="button" id="btn-blur-paste-sketch" class="btn btn-critique-paste"
+                    title="Paste drawing from clipboard [Cmd+V]">
+                    <span class="critique-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+                        <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
+                      </svg></span>
+                    <span>Paste Sketch <kbd>Cmd+V</kbd></span>
+                  </button>
+                  <button type="button" id="btn-blur-unblur-peek" class="btn btn-critique-peek"
+                    title="Unblur reference photo to visually compare while rating">
+                    <span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                        style="vertical-align:middle;margin-right:4px;">
+                        <path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6-10-6-10-6Z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>Unblur Reference</span>
+                  </button>
+                </div>
+                <p class="blur-critique-hint">Drag & drop sketch or press <kbd>Cmd+V</kbd> for Difference comparison</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Quick Tagging Dock (Triggered by Hotkey T or Tag button) -->
+          <div id="session-tag-dock" class="session-tag-dock hidden">
+            <div class="tag-dock-card">
+              <div class="tag-dock-header">
+                <div class="tag-dock-title">
+                  <span class="tag-dock-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
+                      <line x1="7" y1="7" x2="7.01" y2="7" />
+                    </svg></span>
+                  <strong>Tag Reference</strong>
+                  <span class="tag-dock-hint">[T] close · [1-6] quick toggle</span>
+                </div>
+                <button type="button" class="btn-dock-close" id="btn-close-tag-dock"><svg width="12" height="12"
+                    viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                    stroke-linejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg></button>
+              </div>
+
+              <!-- Active tags for current card -->
+              <div class="tag-dock-row">
+                <span class="tag-row-label">Active:</span>
+                <div id="tag-dock-active-tags" class="tag-chips-wrap">
+                  <!-- Injected: active tags as removable chips -->
+                </div>
+              </div>
+
+              <!-- Quick Preset Tags [1-6] -->
+              <div class="tag-dock-row">
+                <span class="tag-row-label">Presets:</span>
+                <div class="tag-presets-grid" id="tag-presets-grid">
+                  <!-- Injected: 1 hands, 2 foreshortening, 3 lighting, 4 anatomy, 5 gesture, 6 leech -->
+                </div>
+              </div>
+
+              <!-- Custom Tag Input -->
+              <div class="tag-dock-input-row">
+                <input type="text" id="input-custom-tag" class="tag-input-field"
+                  placeholder="Add custom tag (e.g. portrait, drapery)..." maxlength="30" autocomplete="off">
+                <button type="button" id="btn-submit-tag" class="btn btn-primary btn-small">+ Add</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Onion-Skin Sketch Critique Dock -->
+          <div id="sketch-critique-dock" class="sketch-critique-dock hidden">
+            <div class="sketch-dock-card">
+              <!-- Header row: title, eye flicker toggle, blend modes, action buttons -->
+              <div class="sketch-dock-row sketch-dock-header">
+                <div class="sketch-dock-title-group">
+                  <span class="dock-drag-grip" title="Drag to move Onion-Skin dock" aria-label="Drag to move"><svg
+                      width="10" height="14" viewBox="0 0 10 16" fill="currentColor" aria-hidden="true">
+                      <circle cx="3" cy="3" r="1.5" />
+                      <circle cx="7" cy="3" r="1.5" />
+                      <circle cx="3" cy="8" r="1.5" />
+                      <circle cx="7" cy="8" r="1.5" />
+                      <circle cx="3" cy="13" r="1.5" />
+                      <circle cx="7" cy="13" r="1.5" />
+                    </svg></span>
+                  <span class="sketch-dock-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polygon points="12 2 2 7 12 12 22 7 12 2" />
+                      <polyline points="2 17 12 22 22 17" />
+                      <polyline points="2 12 12 17 22 12" />
+                    </svg></span>
+                  <span class="sketch-dock-title">Sketch Critique</span>
+                  <button type="button" id="btn-sketch-toggle-vis" class="btn-sketch-vis"
+                    title="Toggle Sketch Visibility [K] (Flicker Test)">
+                    <span id="sketch-vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6-10-6-10-6Z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg></span>
+                  </button>
+                </div>
+
+                <!-- Blend Mode Pills -->
+                <div class="sketch-blend-group">
+                  <button type="button" class="btn-blend-mode active" data-blend="difference"
+                    title="Difference Mode — Matching proportions turn black; errors glow brightly">
+                    Difference
+                  </button>
+                  <button type="button" class="btn-blend-mode" data-blend="normal"
+                    title="Normal Mode — Classic semi-transparent onion skin">
+                    Normal
+                  </button>
+                  <button type="button" class="btn-blend-mode" data-blend="multiply"
+                    title="Multiply Mode — Dark lines over reference photo (removes white canvas)">
+                    Multiply
+                  </button>
+                </div>
+
+                <!-- Quick Action / Clear -->
+                <div class="sketch-dock-actions">
+                  <button type="button" id="btn-sketch-paste-new" class="btn btn-hud-mini"
+                    title="Paste new sketch [Cmd+V]">
+                    <span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                        style="vertical-align:middle;margin-right:4px;">
+                        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+                        <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
+                      </svg>Paste</span>
+                  </button>
+                  <button type="button" id="btn-sketch-min-dock" class="btn-dock-close" title="Minimize / Expand Dock">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                      stroke-linecap="round" stroke-linejoin="round">
+                      <line x1="5" y1="12" x2="19" y2="12" />
+                    </svg>
+                  </button>
+                  <button type="button" id="btn-sketch-hide-dock" class="btn-dock-close"
+                    title="Hide Sketch Dock (Sketch stays active — open via Overlay [K])">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                      stroke-linecap="round" stroke-linejoin="round">
+                      <line x1="18" y1="6" x2="6" y2="18" />
+                      <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                  </button>
+                  <button type="button" id="btn-sketch-clear" class="btn-sketch-close"
+                    title="Remove / Clear sketch attempt">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                      stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M3 6h18" />
+                      <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                      <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Controls row: Opacity Slider + Fit Aspect Toggle -->
+              <div class="sketch-dock-row sketch-dock-controls">
+                <div class="sketch-slider-group">
+                  <span class="sketch-slider-label">Opacity:</span>
+                  <input type="range" id="slider-sketch-opacity" min="0" max="100" value="100"
+                    class="sketch-opacity-slider">
+                  <span id="sketch-opacity-val" class="sketch-val-badge">100%</span>
+                </div>
+
+                <div class="sketch-fit-group">
+                  <span class="sketch-fit-label">Fit:</span>
+                  <button type="button" id="btn-sketch-fit-toggle" class="btn-sketch-fit"
+                    title="Toggle aspect ratio: Fill (exact stretch to reference) vs Contain (preserve original ratio)">
+                    Fill 1:1
+                  </button>
+                </div>
+
+                <!-- Alignment controls (Pan, Scale, Rotate) -->
+                <div class="sketch-align-group">
+                  <button type="button" id="btn-sketch-align-toggle" class="btn-sketch-align"
+                    title="Align Sketch [A] — Drag stage to pan, scroll to scale, Shift+scroll or [/] to rotate">
+                    <span class="align-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="5 9 2 12 5 15" />
+                        <polyline points="9 5 12 2 15 5" />
+                        <polyline points="15 19 12 22 9 19" />
+                        <polyline points="19 9 22 12 19 15" />
+                        <line x1="2" y1="12" x2="22" y2="12" />
+                        <line x1="12" y1="2" x2="12" y2="22" />
+                      </svg></span> <span id="sketch-align-label">Align [A]</span>
+                  </button>
+                  <button type="button" id="btn-sketch-align-reset" class="btn-sketch-reset"
+                    title="Reset sketch offset, scale, and rotation to 1:1">
+                    ↺ Reset
+                  </button>
+                  <span id="sketch-align-metrics" class="sketch-align-metrics hidden">0px · 100% · 0°</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Color & Dominant Palette Extraction HUD -->
+          <div id="palette-extraction-hud" class="palette-extraction-hud hidden">
+            <div class="palette-hud-card">
+              <div class="palette-hud-header">
+                <div class="palette-hud-title-group">
+                  <span class="dock-drag-grip" title="Drag to move Palette window" aria-label="Drag to move"><svg
+                      width="10" height="14" viewBox="0 0 10 16" fill="currentColor" aria-hidden="true">
+                      <circle cx="3" cy="3" r="1.5" />
+                      <circle cx="7" cy="3" r="1.5" />
+                      <circle cx="3" cy="8" r="1.5" />
+                      <circle cx="7" cy="8" r="1.5" />
+                      <circle cx="3" cy="13" r="1.5" />
+                      <circle cx="7" cy="13" r="1.5" />
+                    </svg></span>
+                  <span class="palette-hud-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
+                      <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
+                      <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
+                      <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
+                      <path
+                        d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.563-2.512 5.563-5.563C22 6.5 17.5 2 12 2z" />
+                    </svg></span>
+                  <strong class="palette-hud-title">Dominant Palette & Lighting</strong>
+                  <span class="palette-hud-hint">[E] toggle</span>
+                </div>
+                <div class="palette-hud-header-actions">
+                  <button type="button" id="btn-toggle-eyedropper" class="btn btn-hud-mini"
+                    title="Live HSB/Value Eyedropper on Hover [E]">
+                    <span class="btn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="m19 11-8-8-8.6 8.6a2 2 0 0 0 0 2.8l5.2 5.2c.8.8 2 .8 2.8 0L19 11Z" />
+                        <path d="m5 2 5 5" />
+                        <path d="m2 13 4 4" />
+                        <path d="M22 22s-2.5-.5-4-2l-3-3 5-5 2 2c1.5 1.5 2 4 2 4l-2 4Z" />
+                      </svg></span> <span id="eyedropper-btn-label">Eyedropper Off</span>
+                  </button>
+                  <button type="button" id="btn-min-palette-hud" class="btn-dock-close"
+                    title="Minimize / Expand Palette HUD">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                      stroke-linecap="round" stroke-linejoin="round">
+                      <line x1="5" y1="12" x2="19" y2="12" />
+                    </svg>
+                  </button>
+                  <button type="button" id="btn-close-palette-hud" class="btn-dock-close"
+                    title="Close Palette HUD [E]"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                      <line x1="18" y1="6" x2="6" y2="18" />
+                      <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg></button>
+                </div>
+              </div>
+
+              <!-- Dominant Swatches Bar -->
+              <div class="palette-swatches-section">
+                <div class="palette-swatches-label">Dominant Light & Shadow Harmony:</div>
+                <div id="palette-dominant-swatches" class="palette-swatches-bar">
+                  <!-- Injected: 5 to 7 swatches with color fill, hex, and value -->
+                </div>
+              </div>
+
+              <!-- Active / Hovered Color Inspector Card -->
+              <div id="palette-color-inspector" class="palette-color-inspector">
+                <div class="inspector-color-preview-box">
+                  <div id="inspector-preview-color" class="inspector-preview-color"></div>
+                  <div id="inspector-temp-badge" class="inspector-temp-badge">Warm</div>
+                </div>
+                <div class="inspector-details">
+                  <div class="inspector-row-main">
+                    <span id="inspector-hex" class="inspector-hex">#8A5A44</span>
+                    <button type="button" id="btn-copy-inspector-hex" class="btn-copy-hex"
+                      title="Copy HEX to clipboard"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                        style="vertical-align:middle;margin-right:4px;">
+                        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+                        <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
+                      </svg>Copy</button>
+                  </div>
+                  <div class="inspector-metrics-grid">
+                    <div class="inspector-metric">
+                      <span class="metric-label">Value (Gray)</span>
+                      <span id="inspector-val-lightness" class="metric-val">48%</span>
+                    </div>
+                    <div class="inspector-metric">
+                      <span class="metric-label">Hue</span>
+                      <span id="inspector-val-hue" class="metric-val">19°</span>
+                    </div>
+                    <div class="inspector-metric">
+                      <span class="metric-label">Saturation</span>
+                      <span id="inspector-val-sat" class="metric-val">51%</span>
+                    </div>
+                    <div class="inspector-metric">
+                      <span class="metric-label">Brightness</span>
+                      <span id="inspector-val-bri" class="metric-val">54%</span>
+                    </div>
+                    <div class="inspector-metric metric-full">
+                      <span class="metric-label">RGB</span>
+                      <span id="inspector-val-rgb" class="metric-val">rgb(138, 90, 68)</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Sampled Swatches from Eyedropper Clicks -->
+              <div class="palette-sampled-section" id="palette-sampled-section">
+                <div class="palette-sampled-header">
+                  <span class="palette-swatches-label">Sampled Study Colors:</span>
+                  <button type="button" id="btn-clear-sampled-colors" class="btn-clear-text hidden">Clear</button>
+                </div>
+                <div id="palette-sampled-swatches" class="palette-sampled-bar">
+                  <span class="palette-empty-sampled-hint">Turn on Live Eyedropper & click reference to sample custom
+                    swatches</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Smart Crop / Focal Point Zoom Card Creation Overlay -->
+          <div id="smart-crop-overlay" class="smart-crop-overlay hidden">
+            <div class="crop-overlay-backdrop"></div>
+
+            <div class="crop-top-banner">
+              <div class="crop-banner-content">
+                <span class="crop-banner-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M6 2v14a2 2 0 0 0 2 2h14" />
+                    <path d="M18 22V8a2 2 0 0 0-2-2H2" />
+                  </svg></span>
+                <strong>Smart Crop / Focal Point Card</strong>
+                <span class="crop-banner-hint">Drag a box over hands, face, or drapery • [Enter] Save • [Esc]
+                  Cancel</span>
+              </div>
+              <button type="button" id="btn-cancel-crop" class="btn btn-ghost-mini"><svg width="12" height="12"
+                  viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                  stroke-linejoin="round" style="vertical-align:middle;margin-right:3px;">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>Cancel</button>
+            </div>
+
+            <!-- Interactive draggable crop selection box -->
+            <div id="crop-box" class="crop-box hidden">
+              <div class="crop-box-outline"></div>
+              <div class="crop-handle crop-handle-nw" data-handle="nw"></div>
+              <div class="crop-handle crop-handle-ne" data-handle="ne"></div>
+              <div class="crop-handle crop-handle-se" data-handle="se"></div>
+              <div class="crop-handle crop-handle-sw" data-handle="sw"></div>
+
+              <!-- Floating creation popover attached to the crop box -->
+              <div id="crop-popover" class="crop-popover">
+                <div class="crop-popover-title">
+                  <span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                      stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                      style="vertical-align:middle;margin-right:4px;">
+                      <path d="M6 2v14a2 2 0 0 0 2 2h14" />
+                      <path d="M18 22V8a2 2 0 0 0-2-2H2" />
+                    </svg>Create Focal Point Child Card</span>
+                  <span class="crop-popover-sub">Independent SRS schedule (Zero disk copy)</span>
+                </div>
+                <div class="crop-input-wrap">
+                  <input type="text" id="crop-label-input" class="crop-label-input"
+                    placeholder="e.g. Hands study, Dramatic shadow, Facial features..." maxlength="45"
+                    autocomplete="off">
+                </div>
+                <div class="crop-quick-tags">
+                  <span class="crop-tags-hint">Topic Tag:</span>
+                  <button type="button" class="btn-crop-tag active" data-tag="hands">#hands</button>
+                  <button type="button" class="btn-crop-tag" data-tag="face">#face</button>
+                  <button type="button" class="btn-crop-tag" data-tag="drapery">#drapery</button>
+                  <button type="button" class="btn-crop-tag" data-tag="lighting">#lighting</button>
+                  <button type="button" class="btn-crop-tag" data-tag="feet">#feet</button>
+                  <button type="button" class="btn-crop-tag" data-tag="foreshortening">#foreshortening</button>
+                </div>
+                <div class="crop-actions-row">
+                  <button type="button" id="btn-cancel-crop-popover" class="btn btn-ghost btn-small">Cancel</button>
+                  <button type="button" id="btn-confirm-crop" class="btn btn-primary btn-small"><svg width="12"
+                      height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                      stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>Create Focal Card</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Reference Image Stage -->
+          <div class="image-stage" id="image-stage">
+            <!-- The frame is sized to the image and carries zoom / pan / rotate / flip,
+               so the proportion grid and sketch overlay always sit exactly on the picture. -->
+            <div class="image-frame" id="image-frame">
+              <img id="session-image" src="" alt="Reference Image" draggable="false">
+              <div id="image-grid-overlay" class="image-grid-overlay hidden"></div>
+              <!-- Onion-Skin Sketch Overlay -->
+              <div id="sketch-overlay-wrap" class="sketch-overlay-wrap hidden">
+                <img id="sketch-overlay-img" class="sketch-overlay-img" alt="Sketch Overlay" draggable="false">
+              </div>
+              <!-- Plumb-Line & Angle Measurement Overlay -->
+              <svg id="plumb-overlay" class="plumb-overlay hidden" preserveAspectRatio="none" aria-hidden="true"></svg>
+            </div>
+
+            <!-- Drag & Drop Visual Target -->
+            <div id="sketch-drop-target" class="sketch-drop-target hidden">
+              <div class="sketch-drop-box">
+                <div class="sketch-drop-icon"><svg width="40" height="40" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
+                    <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
+                    <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
+                    <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
+                    <path
+                      d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.563-2.512 5.563-5.563C22 6.5 17.5 2 12 2z" />
+                  </svg></div>
+                <div class="sketch-drop-text">Drop sketch to overlay</div>
+                <div class="sketch-drop-hint">Compare proportions with Difference blend mode</div>
+              </div>
+            </div>
+
+            <!-- Floating Eyedropper Loupe / Magnifier -->
+            <div id="eyedropper-loupe" class="eyedropper-loupe hidden">
+              <div class="loupe-preview-box">
+                <div id="loupe-swatch-circle" class="loupe-swatch-circle"></div>
+                <span id="loupe-temp-badge" class="loupe-temp-badge">Warm</span>
+              </div>
+              <div class="loupe-data-col">
+                <div class="loupe-hex-line">
+                  <span id="loupe-hex" class="loupe-hex">#FFFFFF</span>
+                </div>
+                <div class="loupe-stats-line">
+                  <span>Val: <strong id="loupe-val">50%</strong></span>
+                  <span>H: <strong id="loupe-hue">0°</strong></span>
+                  <span>S: <strong id="loupe-sat">0%</strong></span>
+                  <span>B: <strong id="loupe-bri">0%</strong></span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Side-by-Side Comparison Split View (Compares sketch/history next to unblurred reference) -->
+          <div id="sketch-split-view" class="sketch-split-view hidden">
+            <div class="split-pane split-ref-pane">
+              <div class="split-pane-header">
+                <span class="split-pane-tag"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                    style="vertical-align:middle;margin-right:4px;">
+                    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                    <circle cx="12" cy="13" r="4" />
+                  </svg>Reference Photo</span>
+                <span class="split-pane-sub" id="split-ref-name">Original Reference</span>
+              </div>
+              <div class="split-pane-body" id="split-ref-body">
+                <img id="split-ref-image" src="" alt="Reference Photo" draggable="false">
+              </div>
+            </div>
+
+            <div class="split-pane split-sketch-pane">
+              <div class="split-pane-header">
+                <div class="split-header-left">
+                  <span id="split-sketch-tag" class="split-pane-tag"><svg width="12" height="12" viewBox="0 0 24 24"
+                      fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                      style="vertical-align:middle;margin-right:4px;">
+                      <path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                      <path d="m15 5 4 4" />
+                    </svg>Your Sketch</span>
+                  <span id="split-sketch-date" class="split-date-badge">Today</span>
+                </div>
+                <div class="split-header-right">
+                  <div id="split-history-tabs" class="split-history-tabs"></div>
+                  <button type="button" id="btn-close-split-view" class="btn-dock-close"
+                    title="Close Side-by-Side View [Y]"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                      <line x1="18" y1="6" x2="6" y2="18" />
+                      <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg></button>
+                </div>
+              </div>
+              <div class="split-pane-body" id="split-sketch-body">
+                <img id="split-sketch-image" src="" alt="Sketch Attempt" draggable="false">
+                <!-- Empty state dropzone inside split view if no sketch has been attached yet -->
+                <div id="split-sketch-empty" class="split-sketch-empty">
+                  <span class="split-empty-icon"><svg width="32" height="32" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                      <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
+                      <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
+                      <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
+                      <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
+                      <path
+                        d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.563-2.512 5.563-5.563C22 6.5 17.5 2 12 2z" />
+                    </svg></span>
+                  <span class="split-empty-title">Drop Sketch or Paste <kbd>Cmd+V</kbd></span>
+                  <p class="split-empty-desc">Compare your line work and proportions directly next to the original
+                    photo.</p>
+                  <button type="button" id="btn-split-upload-sketch" class="btn btn-secondary btn-small"><svg width="12"
+                      height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                      stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;">
+                      <path
+                        d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+                    </svg>Choose Image</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="session-image-meta">
+            <p id="session-image-name" class="image-name"></p>
+            <div id="session-history-pill" class="session-history-pill hidden"
+              title="View past attempts side-by-side with reference [Y]">
+              <span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;">
+                  <circle cx="12" cy="12" r="10" />
+                  <polyline points="12 6 12 12 16 14" />
+                  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                  <polyline points="3 3 3 8 8 8" />
+                </svg></span> <strong id="history-pill-text">0 Past Attempts</strong> <kbd>Y</kbd>
+            </div>
+            <div id="session-focal-pill" class="session-focal-pill hidden"
+              title="Focal Point Child Card — Toggle full context [Shift+C]">
+              <span class="focal-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="11" cy="11" r="8" />
+                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                </svg></span> <strong id="focal-pill-title">Focal Point: Hands</strong>
+              <button type="button" id="btn-toggle-crop-context" class="btn-focal-toggle"
+                title="Toggle between focal crop and full image [Shift+C]">
+                <span id="focal-context-btn-text">Full Reference</span> <kbd>Shift+C</kbd>
+              </button>
+            </div>
+            <div id="session-card-tags" class="session-card-tags"></div>
+          </div>
+        </div>
+
+        <!-- Rating Area (Auto-hiding bottom dock like tools) -->
+        <div class="rating-area" id="session-rating-area">
+          <!-- Rating Toggle Tab (click brings it up like macOS tools dock) -->
+          <button type="button" id="btn-rating-toggle" class="rating-toggle-tab" title="Toggle Rating Dock [1-4]"
+            aria-label="Toggle Rating Dock">
+            <svg class="rating-arrow-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="18 15 12 9 6 15"></polyline>
+            </svg>
+            <span class="rating-toggle-label">Rate</span>
+          </button>
+
+          <!-- Interactive Sketch Rating Dropzone & Comparison Bar -->
+          <div id="rating-sketch-bar" class="rating-sketch-bar">
+            <div id="rating-sketch-empty" class="rating-sketch-empty">
+              <span class="rating-sketch-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+                  <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
+                </svg></span>
+              <span class="rating-sketch-prompt">Drop sketch screenshot or paste <kbd>Cmd+V</kbd> to compare next to
+                reference</span>
+              <button type="button" id="btn-rating-attach-sketch" class="btn btn-ghost-mini"><svg width="12" height="12"
+                  viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                  stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;">
+                  <path
+                    d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+                </svg>Add Sketch</button>
+            </div>
+            <div id="rating-sketch-active" class="rating-sketch-active hidden">
+              <div class="rating-sketch-thumb-wrap">
+                <img id="rating-sketch-thumb" src="" alt="Attached Sketch">
+              </div>
+              <div class="rating-sketch-info">
+                <span class="rating-sketch-badge"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                    style="vertical-align:middle;margin-right:4px;">
+                    <path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                    <path d="m15 5 4 4" />
+                  </svg>Sketch Attached</span>
+                <span class="rating-sketch-subtext">Will be saved to Visual History on rating</span>
+              </div>
+              <div class="rating-sketch-view-controls">
+                <button type="button" id="btn-toggle-split-view" class="btn btn-hud-mini active"
+                  title="Compare side-by-side next to reference [Y]">◫ Side-by-Side</button>
+                <button type="button" id="btn-toggle-overlay-view" class="btn btn-hud-mini"
+                  title="Compare onion-skin overlay [K]"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                    style="vertical-align:middle;margin-right:4px;">
+                    <polygon points="12 2 2 7 12 12 22 7 12 2" />
+                    <polyline points="2 17 12 22 22 17" />
+                    <polyline points="2 12 12 17 22 12" />
+                  </svg>Overlay</button>
+                <button type="button" id="btn-remove-rating-sketch" class="btn-sketch-close" title="Remove sketch"><svg
+                    width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg></button>
+              </div>
+            </div>
+          </div>
+
+          <p class="rating-prompt">How was this reference recall?</p>
+          <div class="rating-buttons">
+            <button id="btn-rate-again" class="btn btn-rate btn-again" title="Rate Again — Reset (<10m) [Key 1]">
+              <span class="rate-badge">1</span>
+              <span class="rate-name">Again</span>
+              <span class="rate-interval">&lt;10m</span>
+            </button>
+            <button id="btn-rate-hard" class="btn btn-rate btn-hard" title="Rate Hard [Key 2]">
+              <span class="rate-badge">2</span>
+              <span class="rate-name">Hard</span>
+              <span class="rate-interval">1 day</span>
+            </button>
+            <button id="btn-rate-medium" class="btn btn-rate btn-medium" title="Rate Good / Medium [Key 3]">
+              <span class="rate-badge">3</span>
+              <span class="rate-name">Good</span>
+              <span class="rate-interval">3 days</span>
+            </button>
+            <button id="btn-rate-easy" class="btn btn-rate btn-easy" title="Rate Easy [Key 4]">
+              <span class="rate-badge">4</span>
+              <span class="rate-name">Easy</span>
+              <span class="rate-interval">7 days</span>
+            </button>
+          </div>
+          <div class="session-nav-buttons">
+            <button id="btn-skip" class="btn btn-ghost" title="Skip image [Shift+S or S on rating screen]">
+              <span class="btn-skip-label">Skip</span><span class="skip-subtext"> (no rating)</span> <kbd>Shift+S</kbd>
+            </button>
+          </div>
+        </div>
       </div>
+      <!-- End #session-workspace -->
 
-      <!-- Rating Area -->
-      <div class="rating-area">
-        <p class="rating-prompt">How was this reference recall?</p>
-        <div class="rating-buttons">
-          <button id="btn-rate-hard" class="btn btn-rate btn-hard" title="Rate Hard [Key 1]">
-            <span class="rate-badge">1</span>
-            <span class="rate-name">Hard</span>
-            <span class="rate-interval">1 day</span>
-          </button>
-          <button id="btn-rate-medium" class="btn btn-rate btn-medium" title="Rate Medium [Key 2]">
-            <span class="rate-badge">2</span>
-            <span class="rate-name">Medium</span>
-            <span class="rate-interval">3 days</span>
-          </button>
-          <button id="btn-rate-easy" class="btn btn-rate btn-easy" title="Rate Easy [Key 3]">
-            <span class="rate-badge">3</span>
-            <span class="rate-name">Easy</span>
-            <span class="rate-interval">7 days</span>
-          </button>
-        </div>
-        <div class="session-nav-buttons">
-          <button id="btn-skip" class="btn btn-ghost" title="Skip image [Key S]">
-            Skip (no rating) <kbd>S</kbd>
-          </button>
+      <!-- Placeholder displayed in main tab when floating PiP is active -->
+      <div id="session-pip-placeholder" class="session-pip-placeholder hidden">
+        <div class="pip-placeholder-card">
+          <div class="pip-icon-huge"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="3" width="20" height="18" rx="2" />
+              <rect x="11" y="11" width="9" height="7" rx="1" />
+            </svg></div>
+          <h3 id="pip-placeholder-title">Always-on-Top PiP Mode Active</h3>
+          <p id="pip-placeholder-desc">Your practice reference is currently floating above your drawing canvas / Blender
+            viewport.</p>
+          <div id="pip-browser-tip" class="pip-browser-tip hidden"></div>
+          <div class="pip-placeholder-hints">
+            <div class="pip-hint-pill"><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd> Rate</div>
+            <div class="pip-hint-pill"><kbd>Space</kbd> Pause</div>
+            <div class="pip-hint-pill"><kbd>S</kbd> Skip</div>
+            <div class="pip-hint-pill"><kbd>G</kbd>/<kbd>N</kbd>/<kbd>L</kbd>/<kbd>P</kbd> Filters</div>
+            <div class="pip-hint-pill"><kbd>V</kbd> Return</div>
+          </div>
+          <div class="pip-placeholder-actions">
+            <button type="button" id="btn-return-from-pip" class="btn btn-primary btn-large">
+              <span>↩</span> Return Reference to Tab
+            </button>
+            <button type="button" id="btn-pip-mode-switch" class="btn btn-secondary btn-small">
+              <span>⇄</span> Switch between macOS PiP / Popup Window
+            </button>
+            <button type="button" id="btn-pip-end-session" class="btn btn-ghost">
+              End Session
+            </button>
+          </div>
         </div>
       </div>
 
       <!-- Empty review state -->
       <div id="review-empty" class="review-empty hidden">
-        <div class="empty-icon">🎉</div>
+        <div class="empty-icon"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6" />
+            <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18" />
+            <path d="M4 22h16" />
+            <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" />
+            <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" />
+            <path d="M18 2H6v7a6 6 0 0 0 12 0V2Z" />
+          </svg></div>
         <h2>All Caught Up!</h2>
         <p>No more cards due for review in this deck today.</p>
         <button id="btn-review-done" class="btn btn-primary btn-large">Back to Deck</button>
@@ -387,19 +1711,43 @@
     <div id="modal-wallpaper" class="modal-overlay hidden">
       <div class="modal modal-wallpaper-custom">
         <div class="modal-header-row">
-          <h2>🎨 Custom Background Wallpaper</h2>
-          <button type="button" class="btn-modal-close" id="btn-close-wallpaper-x">✕</button>
+          <h2><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:6px;">
+              <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
+              <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
+              <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
+              <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
+              <path
+                d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.563-2.512 5.563-5.563C22 6.5 17.5 2 12 2z" />
+            </svg>Custom Background Wallpaper</h2>
+          <button type="button" class="btn-modal-close" id="btn-close-wallpaper-x"><svg width="12" height="12"
+              viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+              stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg></button>
         </div>
-        <p class="modal-subtext">Add your own inspiring art, studio wallpaper, or photo to make this space your personal atelier.</p>
+        <p class="modal-subtext">Add your own inspiring art, studio wallpaper, or photo to make this space your personal
+          atelier.</p>
 
         <!-- Dropzone / File Picker -->
         <div class="wallpaper-dropzone" id="wallpaper-dropzone">
           <div class="dropzone-content">
-            <div class="dropzone-icon">🖼️</div>
+            <div class="dropzone-icon"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                <circle cx="8.5" cy="8.5" r="1.5" />
+                <polyline points="21 15 16 10 5 21" />
+              </svg></div>
             <p class="dropzone-label"><strong>Drag & Drop your wallpaper image here</strong> or click to browse</p>
             <span class="dropzone-sub">Supports PNG, JPG, WEBP, GIF, AVIF</span>
             <div style="margin-top: 10px;">
-              <button type="button" class="btn btn-secondary btn-small" id="btn-browse-wallpaper-file">📁 Choose Image from Computer</button>
+              <button type="button" class="btn btn-secondary btn-small" id="btn-browse-wallpaper-file"><svg width="12"
+                  height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;">
+                  <path
+                    d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+                </svg>Choose Image from Computer</button>
             </div>
           </div>
           <input type="file" id="wallpaper-file-input" accept="image/*" class="wallpaper-file-input">
@@ -456,15 +1804,32 @@
     <div id="modal-shortcuts" class="modal-overlay hidden">
       <div class="modal modal-shortcuts-view">
         <div class="modal-header-row">
-          <h2>⌨️ Artist Keyboard Shortcuts</h2>
-          <button type="button" class="btn-modal-close" id="btn-close-shortcuts-x">✕</button>
+          <h2><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:6px;">
+              <rect x="2" y="4" width="20" height="16" rx="2" />
+              <path d="M6 8h.01" />
+              <path d="M10 8h.01" />
+              <path d="M14 8h.01" />
+              <path d="M18 8h.01" />
+              <path d="M6 12h.01" />
+              <path d="M10 12h.01" />
+              <path d="M14 12h.01" />
+              <path d="M18 12h.01" />
+              <path d="M7 16h10" />
+            </svg>Artist Keyboard Shortcuts</h2>
+          <button type="button" class="btn-modal-close" id="btn-close-shortcuts-x"><svg width="12" height="12"
+              viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+              stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg></button>
         </div>
         <p class="modal-subtext">Keep both hands on your stylus and keyboard for rapid flow state.</p>
 
         <div class="shortcuts-grid">
           <div class="shortcut-item">
-            <div class="shortcut-keys"><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></div>
-            <div class="shortcut-desc">Rate card: Hard / Medium / Easy</div>
+            <div class="shortcut-keys"><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd></div>
+            <div class="shortcut-desc">Rate card: Again (&lt;10m reset) / Hard / Good / Easy</div>
           </div>
           <div class="shortcut-item">
             <div class="shortcut-keys"><kbd>Space</kbd></div>
@@ -472,6 +1837,10 @@
           </div>
           <div class="shortcut-item">
             <div class="shortcut-keys"><kbd>S</kbd></div>
+            <div class="shortcut-desc">Squint Blur — strip high-frequency detail for big form mass check</div>
+          </div>
+          <div class="shortcut-item">
+            <div class="shortcut-keys"><kbd>Shift+S</kbd></div>
             <div class="shortcut-desc">Skip reference without rating</div>
           </div>
           <div class="shortcut-item">
@@ -479,8 +1848,25 @@
             <div class="shortcut-desc">Value Check (Grayscale filter toggle)</div>
           </div>
           <div class="shortcut-item">
+            <div class="shortcut-keys"><kbd>N</kbd></div>
+            <div class="shortcut-desc">Notan Mode — 2-Tone harmonic black/white value study</div>
+          </div>
+          <div class="shortcut-item">
+            <div class="shortcut-keys"><kbd>L</kbd></div>
+            <div class="shortcut-desc">Silhouette Mode — threshold subject vs background for gesture clarity</div>
+          </div>
+          <div class="shortcut-item">
+            <div class="shortcut-keys"><kbd>P</kbd></div>
+            <div class="shortcut-desc">Posterize Mode — 3 to 4 tonal steps (Light, Halftone, Core Shadow, Occlusion)
+            </div>
+          </div>
+          <div class="shortcut-item">
+            <div class="shortcut-keys"><kbd>[</kbd> / <kbd>]</kbd></div>
+            <div class="shortcut-desc">Decrease / increase Silhouette threshold or Posterize steps</div>
+          </div>
+          <div class="shortcut-item">
             <div class="shortcut-keys"><kbd>O</kbd></div>
-            <div class="shortcut-desc">Toggle Proportion Grid Overlay</div>
+            <div class="shortcut-desc">Cycle proportion grid: 3×3 → 4×4 → 8×8 → diagonals → off</div>
           </div>
           <div class="shortcut-item">
             <div class="shortcut-keys"><kbd>M</kbd></div>
@@ -503,8 +1889,47 @@
             <div class="shortcut-desc">Reset Zoom and Pan</div>
           </div>
           <div class="shortcut-item">
-            <div class="shortcut-keys"><kbd>F</kbd></div>
-            <div class="shortcut-desc">Toggle Zen Fullscreen Mode</div>
+            <div class="shortcut-keys"><kbd>V</kbd></div>
+            <div class="shortcut-desc">Always-on-Top Floating PiP Mode (Draw over Photoshop / Blender)</div>
+          </div>
+          <div class="shortcut-item">
+            <div class="shortcut-keys"><kbd>F</kbd> / <kbd>Esc</kbd></div>
+            <div class="shortcut-desc">Enter / leave true fullscreen (controls auto-hide)</div>
+          </div>
+          <div class="shortcut-item">
+            <div class="shortcut-keys"><kbd>Cmd+V</kbd> / <kbd>K</kbd> / <kbd>Shift+K</kbd></div>
+            <div class="shortcut-desc">Onion-Skin Overlay & Floating Dock — drag to move, [K] flicker test, [Shift+K]
+              toggle dock</div>
+          </div>
+          <div class="shortcut-item">
+            <div class="shortcut-keys"><kbd>A</kbd></div>
+            <div class="shortcut-desc">Align Sketch Mode — drag stage to pan, wheel to scale, Shift+wheel / [ ] to
+              rotate</div>
+          </div>
+          <div class="shortcut-item">
+            <div class="shortcut-keys"><kbd>Y</kbd></div>
+            <div class="shortcut-desc">Visual History & Side-by-Side Comparison — compare past sketches</div>
+          </div>
+          <div class="shortcut-item">
+            <div class="shortcut-keys"><kbd>E</kbd> / <kbd>Shift+E</kbd></div>
+            <div class="shortcut-desc">Dominant Palette Window — drag to move, [E] toggle, [Shift+E] minimize / collapse
+            </div>
+          </div>
+          <div class="shortcut-item">
+            <div class="shortcut-keys"><kbd>C</kbd></div>
+            <div class="shortcut-desc">Smart Crop — drag to create focal point child card (Zero disk copy)</div>
+          </div>
+          <div class="shortcut-item">
+            <div class="shortcut-keys"><kbd>Shift+C</kbd></div>
+            <div class="shortcut-desc">Toggle Focal Crop ↔ Full Reference View</div>
+          </div>
+          <div class="shortcut-item">
+            <div class="shortcut-keys"><kbd>T</kbd></div>
+            <div class="shortcut-desc">Tag Reference (hands, foreshortening, lighting, leech)</div>
+          </div>
+          <div class="shortcut-item">
+            <div class="shortcut-keys"><kbd>U</kbd> / <kbd>Shift+Drag</kbd></div>
+            <div class="shortcut-desc">Plumb-Line & Angle Measurement — check anatomical tilts and drop-lines</div>
           </div>
           <div class="shortcut-item">
             <div class="shortcut-keys"><kbd>U</kbd></div>
@@ -525,7 +1950,16 @@
     <!-- ==================== MODAL: Session Complete Summary ==================== -->
     <div id="modal-session-summary" class="modal-overlay hidden">
       <div class="modal modal-summary-view">
-        <div class="summary-celebration">🎉</div>
+        <div class="summary-celebration"><svg width="56" height="56" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+            style="color:var(--accent);">
+            <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6" />
+            <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18" />
+            <path d="M4 22h16" />
+            <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" />
+            <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" />
+            <path d="M18 2H6v7a6 6 0 0 0 12 0V2Z" />
+          </svg></div>
         <h2>Session Complete!</h2>
         <p class="summary-deck-title" id="summary-deck-title"></p>
         <div class="summary-stats-box">
@@ -534,7 +1968,7 @@
             <span class="stat-caption">References Practiced</span>
           </div>
           <div class="summary-stat-cell">
-            <span class="stat-number" id="summary-streak-val">0 🔥</span>
+            <span class="stat-number" id="summary-streak-val">0 days</span>
             <span class="stat-caption">Current Streak</span>
           </div>
         </div>
@@ -551,17 +1985,33 @@
     <div id="modal-backup" class="modal-overlay hidden">
       <div class="modal">
         <div class="modal-header-row">
-          <h2>💾 Data Backup & Restore</h2>
-          <button type="button" class="btn-modal-close" id="btn-close-backup-x">✕</button>
+          <h2><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:6px;">
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+              <polyline points="17 21 17 13 7 13 7 21" />
+              <polyline points="7 3 7 8 15 8" />
+            </svg>Data Backup & Restore</h2>
+          <button type="button" class="btn-modal-close" id="btn-close-backup-x"><svg width="12" height="12"
+              viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+              stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg></button>
         </div>
-        <p class="modal-subtext">Export your decks, cards, and review streak history to safely back up your visual library progress.</p>
+        <p class="modal-subtext">Export your decks, cards, and review streak history to safely back up your visual
+          library progress.</p>
 
         <div class="backup-actions-grid">
           <div class="backup-box">
             <h4>Export Progress</h4>
             <p>Download a JSON backup of all your decks and review history.</p>
             <button type="button" id="btn-export-data" class="btn btn-secondary" style="width: 100%;">
-              📥 Export to JSON
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>Export to JSON
             </button>
           </div>
 
@@ -570,7 +2020,12 @@
             <p>Restore your saved decks and card intervals from a backup JSON file.</p>
             <input type="file" id="backup-file-input" accept=".json" class="hidden">
             <button type="button" id="btn-import-data" class="btn btn-secondary" style="width: 100%;">
-              📤 Select Backup File
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="17 8 12 3 7 8" />
+                <line x1="12" y1="3" x2="12" y2="15" />
+              </svg>Select Backup File
             </button>
           </div>
         </div>
@@ -623,7 +2078,8 @@
     <div id="modal-delete" class="modal-overlay hidden">
       <div class="modal modal-small">
         <h2>Delete Deck</h2>
-        <p>Are you sure you want to delete <strong id="delete-deck-name"></strong>? This will remove all review history for this deck.</p>
+        <p>Are you sure you want to delete <strong id="delete-deck-name"></strong>? This will remove all review history
+          for this deck.</p>
         <div class="modal-actions">
           <button id="btn-cancel-delete" class="btn btn-ghost">Cancel</button>
           <button id="btn-confirm-delete" class="btn btn-danger">Delete</button>
@@ -642,7 +2098,11 @@
           </div>
           <div class="folder-browser-list-wrapper">
             <div id="folder-browser-up" class="folder-item folder-item-up hidden">
-              📁 <span>..</span> (parent)
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;">
+                <path
+                  d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+              </svg><span>..</span> (parent)
             </div>
             <div id="folder-browser-list" class="folder-browser-list">
               <!-- Folders rendered by JS -->
@@ -675,6 +2135,12 @@
 
   </div>
 
-  <script src="app.js"></script>
+  <!-- Native Video Picture-in-Picture Streamer (for Safari / browsers without Document PiP) -->
+  <video id="safari-pip-video" muted playsinline
+    style="position:fixed;top:-9999px;left:-9999px;width:720px;height:840px;pointer-events:none;opacity:0;"></video>
+  <canvas id="safari-pip-canvas" width="720" height="840" style="display:none;"></canvas>
+
+  <script src="app.js?v=2.5"></script>
 </body>
+
 </html>

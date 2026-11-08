@@ -2,11 +2,50 @@
   "name": "art-practice-reference",
   "version": "1.0.0",
   "description": "Local art practice reference app with spaced repetition",
-  "main": "server.js",
+  "main": "electron-main.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "electron": "electron .",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win"
   },
   "dependencies": {
     "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.daksh.artpractice",
+    "productName": "Art Practice Studio",
+    "files": [
+      "server.js",
+      "electron-main.js",
+      "preload.js",
+      "child-preload.js",
+      "public/**/*",
+      "assets/**/*",
+      "demo_references/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "category": "public.app-category.graphics-design"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    }
   }
 }
