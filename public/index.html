@@ -1288,96 +1288,164 @@
                 </div>
               </div>
 
-              <!-- Dominant Swatches Bar -->
-              <div class="palette-swatches-section">
-                <div class="palette-swatches-label">Dominant Light & Shadow Harmony <span class="palette-method-tag" title="Color clusters merged in CIELAB space using CIEDE2000 (ΔE < 11)">(CIEDE2000 ΔE&lt;11)</span>:</div>
-                <div id="palette-dominant-swatches" class="palette-swatches-bar">
-                  <!-- Injected: 5 to 7 swatches with color fill, hex, and value -->
-                </div>
+              <!-- View Tabs: Harmony vs Value Map -->
+              <div class="palette-hud-tabs" role="tablist">
+                <button type="button" class="palette-hud-tab active" id="tab-palette-harmony" role="tab"
+                  title="Dominant Palette & Lightness/Chroma Inspector">Palette & Harmony</button>
+                <button type="button" class="palette-hud-tab" id="tab-palette-valuemap" role="tab"
+                  title="CIELAB L* Value Bands & Value Map Breakdown">Value Map</button>
               </div>
 
-              <!-- Active / Hovered Color Inspector Card -->
-              <div id="palette-color-inspector" class="palette-color-inspector">
-                <div class="inspector-color-preview-box">
-                  <div id="inspector-preview-color" class="inspector-preview-color"></div>
-                  <div id="inspector-temp-badge" class="inspector-temp-badge">Warm</div>
+              <!-- View 1: Dominant Harmony & Inspector Panel -->
+              <div id="palette-view-harmony" class="palette-view-panel">
+                <!-- Dominant Swatches Bar -->
+                <div class="palette-swatches-section">
+                  <div class="palette-swatches-label">Dominant Light & Shadow Harmony <span class="palette-method-tag" title="Color clusters merged in CIELAB space using CIEDE2000 (ΔE < 11)">(CIEDE2000 ΔE&lt;11)</span>:</div>
+                  <div id="palette-dominant-swatches" class="palette-swatches-bar">
+                    <!-- Injected: 5 to 7 swatches with color fill, hex, and value -->
+                  </div>
                 </div>
-                <div class="inspector-details">
-                  <div class="inspector-row-main">
-                    <span id="inspector-hex" class="inspector-hex" title="Click to copy HEX">#8A5A44</span>
-                    <div class="copy-dropdown-group">
-                      <button type="button" id="btn-copy-inspector-hex" class="btn-copy-hex"
-                        title="Copy HEX to clipboard"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"
-                          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                          style="vertical-align:middle;margin-right:4px;">
-                          <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
-                          <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
-                        </svg><span id="copy-btn-label">Copy</span></button>
-                      <button type="button" id="btn-copy-menu-trigger" class="btn-copy-dropdown-arrow" title="Choose format to copy (HEX, RGB, HSB, Lab)" aria-label="Choose format to copy">
-                        <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-                      </button>
-                      <div id="palette-copy-menu" class="palette-copy-menu hidden">
-                        <button type="button" class="palette-copy-item" data-format="hex">
-                          <span class="copy-fmt-name">HEX</span>
-                          <span class="copy-fmt-val" id="menu-val-hex">#8A5A44</span>
+
+                <!-- Active / Hovered Color Inspector Card -->
+                <div id="palette-color-inspector" class="palette-color-inspector">
+                  <div class="inspector-color-preview-box">
+                    <div id="inspector-preview-color" class="inspector-preview-color"></div>
+                    <div id="inspector-temp-badge" class="inspector-temp-badge">Warm</div>
+                  </div>
+                  <div class="inspector-details">
+                    <div class="inspector-row-main">
+                      <span id="inspector-hex" class="inspector-hex" title="Click to copy HEX">#8A5A44</span>
+                      <div class="copy-dropdown-group">
+                        <button type="button" id="btn-copy-inspector-hex" class="btn-copy-hex"
+                          title="Copy HEX to clipboard"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                            style="vertical-align:middle;margin-right:4px;">
+                            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+                            <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
+                          </svg><span id="copy-btn-label">Copy</span></button>
+                        <button type="button" id="btn-copy-menu-trigger" class="btn-copy-dropdown-arrow" title="Choose format to copy (HEX, RGB, HSB, Lab)" aria-label="Choose format to copy">
+                          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
                         </button>
-                        <button type="button" class="palette-copy-item" data-format="rgb">
-                          <span class="copy-fmt-name">RGB</span>
-                          <span class="copy-fmt-val" id="menu-val-rgb">rgb(138, 90, 68)</span>
-                        </button>
-                        <button type="button" class="palette-copy-item" data-format="hsb">
-                          <span class="copy-fmt-name">HSB</span>
-                          <span class="copy-fmt-val" id="menu-val-hsb">hsb(19°, 51%, 54%)</span>
-                        </button>
-                        <button type="button" class="palette-copy-item" data-format="lab">
-                          <span class="copy-fmt-name">Lab</span>
-                          <span class="copy-fmt-val" id="menu-val-lab">Lab(48.2, 17.5, 21.0)</span>
-                        </button>
+                        <div id="palette-copy-menu" class="palette-copy-menu hidden">
+                          <button type="button" class="palette-copy-item" data-format="hex">
+                            <span class="copy-fmt-name">HEX</span>
+                            <span class="copy-fmt-val" id="menu-val-hex">#8A5A44</span>
+                          </button>
+                          <button type="button" class="palette-copy-item" data-format="rgb">
+                            <span class="copy-fmt-name">RGB</span>
+                            <span class="copy-fmt-val" id="menu-val-rgb">rgb(138, 90, 68)</span>
+                          </button>
+                          <button type="button" class="palette-copy-item" data-format="hsb">
+                            <span class="copy-fmt-name">HSB</span>
+                            <span class="copy-fmt-val" id="menu-val-hsb">hsb(19°, 51%, 54%)</span>
+                          </button>
+                          <button type="button" class="palette-copy-item" data-format="lab">
+                            <span class="copy-fmt-name">Lab</span>
+                            <span class="copy-fmt-val" id="menu-val-lab">Lab(48.2, 17.5, 21.0)</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="inspector-metrics-grid">
+                      <div class="inspector-metric">
+                        <span id="inspector-metric-label-val" class="metric-label">Value (L*)</span>
+                        <span id="inspector-val-lightness" class="metric-val">48%</span>
+                      </div>
+                      <div class="inspector-metric">
+                        <span class="metric-label">Hue</span>
+                        <span id="inspector-val-hue" class="metric-val">19°</span>
+                      </div>
+                      <div class="inspector-metric">
+                        <span class="metric-label">Saturation</span>
+                        <span id="inspector-val-sat" class="metric-val">51%</span>
+                      </div>
+                      <div class="inspector-metric">
+                        <span class="metric-label">Brightness</span>
+                        <span id="inspector-val-bri" class="metric-val">54%</span>
+                      </div>
+                      <div class="inspector-metric">
+                        <span class="metric-label">Chroma (C*)</span>
+                        <span id="inspector-val-chroma" class="metric-val">27.4</span>
+                      </div>
+                      <div class="inspector-metric">
+                        <span class="metric-label">Lab</span>
+                        <span id="inspector-val-lab" class="metric-val">48, 18, 21</span>
+                      </div>
+                      <div class="inspector-metric metric-full">
+                        <span class="metric-label">RGB (sRGB)</span>
+                        <span id="inspector-val-rgb" class="metric-val">rgb(138, 90, 68)</span>
                       </div>
                     </div>
                   </div>
-                  <div class="inspector-metrics-grid">
-                    <div class="inspector-metric">
-                      <span id="inspector-metric-label-val" class="metric-label">Value (L*)</span>
-                      <span id="inspector-val-lightness" class="metric-val">48%</span>
-                    </div>
-                    <div class="inspector-metric">
-                      <span class="metric-label">Hue</span>
-                      <span id="inspector-val-hue" class="metric-val">19°</span>
-                    </div>
-                    <div class="inspector-metric">
-                      <span class="metric-label">Saturation</span>
-                      <span id="inspector-val-sat" class="metric-val">51%</span>
-                    </div>
-                    <div class="inspector-metric">
-                      <span class="metric-label">Brightness</span>
-                      <span id="inspector-val-bri" class="metric-val">54%</span>
-                    </div>
-                    <div class="inspector-metric">
-                      <span class="metric-label">Chroma (C*)</span>
-                      <span id="inspector-val-chroma" class="metric-val">27.4</span>
-                    </div>
-                    <div class="inspector-metric">
-                      <span class="metric-label">Lab</span>
-                      <span id="inspector-val-lab" class="metric-val">48, 18, 21</span>
-                    </div>
-                    <div class="inspector-metric metric-full">
-                      <span class="metric-label">RGB (sRGB)</span>
-                      <span id="inspector-val-rgb" class="metric-val">rgb(138, 90, 68)</span>
-                    </div>
+                </div>
+
+                <!-- Sampled Swatches from Eyedropper Clicks -->
+                <div class="palette-sampled-section" id="palette-sampled-section">
+                  <div class="palette-sampled-header">
+                    <span class="palette-swatches-label">Sampled Study Colors:</span>
+                    <button type="button" id="btn-clear-sampled-colors" class="btn-clear-text hidden">Clear</button>
+                  </div>
+                  <div id="palette-sampled-swatches" class="palette-sampled-bar">
+                    <span class="palette-empty-sampled-hint">Turn on Live Eyedropper & click reference to sample custom
+                      swatches</span>
                   </div>
                 </div>
               </div>
 
-              <!-- Sampled Swatches from Eyedropper Clicks -->
-              <div class="palette-sampled-section" id="palette-sampled-section">
-                <div class="palette-sampled-header">
-                  <span class="palette-swatches-label">Sampled Study Colors:</span>
-                  <button type="button" id="btn-clear-sampled-colors" class="btn-clear-text hidden">Clear</button>
+              <!-- View 2: CIELAB L* Value Map Panel -->
+              <div id="palette-view-valuemap" class="palette-view-panel hidden">
+                <div class="value-map-controls-row">
+                  <div class="value-map-bands-group" role="group" aria-label="Value Bands">
+                    <span class="value-map-control-label">Bands:</span>
+                    <button type="button" class="btn-val-bands active" data-bands="3" title="3 Value Bands (Darks, Midtones, Lights)">3</button>
+                    <button type="button" class="btn-val-bands" data-bands="5" title="5 Value Bands (Deep Darks, Darks, Midtones, Lights, Highlights)">5</button>
+                    <button type="button" class="btn-val-bands" data-bands="9" title="9 Value Bands (9-step scale)">9</button>
+                  </div>
+                  <div class="value-map-actions-group">
+                    <button type="button" id="btn-toggle-valuemap-overlay" class="btn btn-hud-mini"
+                      title="Render L* Value Map directly onto reference canvas">
+                      <span class="btn-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                          <line x1="3" y1="9" x2="21" y2="9"/>
+                          <line x1="9" y1="21" x2="9" y2="9"/>
+                        </svg></span>
+                      <span id="valuemap-overlay-btn-label">Overlay Map</span>
+                    </button>
+                    <button type="button" id="btn-toggle-sketch-compare" class="btn btn-hud-mini"
+                      title="Compare value coverage with your pasted/imported sketch">
+                      <span class="btn-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <polyline points="16 18 22 12 16 6"/>
+                          <polyline points="8 6 2 12 8 18"/>
+                        </svg></span>
+                      <span id="sketch-compare-btn-label">Compare Sketch</span>
+                    </button>
+                  </div>
                 </div>
-                <div id="palette-sampled-swatches" class="palette-sampled-bar">
-                  <span class="palette-empty-sampled-hint">Turn on Live Eyedropper & click reference to sample custom
-                    swatches</span>
+
+                <!-- Reference Image Value Breakdown Card -->
+                <div class="value-map-breakdown-card">
+                  <div class="value-map-card-header">
+                    <span class="value-map-card-title">Reference Value Distribution:</span>
+                  </div>
+                  <div id="value-map-ref-bar" class="value-map-stacked-bar"></div>
+                  <div id="value-map-ref-legend" class="value-map-legend"></div>
+                </div>
+
+                <!-- Sketch Image Value Breakdown Card (Active on Compare Toggle) -->
+                <div id="value-map-sketch-section" class="value-map-breakdown-card value-map-sketch-card hidden">
+                  <div class="value-map-card-header">
+                    <span class="value-map-card-title">My Sketch Value Distribution:</span>
+                  </div>
+                  <div id="value-map-sketch-content">
+                    <div id="value-map-sketch-bar" class="value-map-stacked-bar"></div>
+                    <div id="value-map-sketch-legend" class="value-map-legend"></div>
+                  </div>
+                  <div id="value-map-sketch-empty" class="value-map-empty-hint hidden">
+                    No sketch loaded. Paste or upload a sketch ([Cmd+V] / [V]) to compare values.
+                  </div>
+                  <div id="value-map-delta-note" class="value-map-delta-note hidden"></div>
                 </div>
               </div>
             </div>
@@ -1457,6 +1525,8 @@
                so the proportion grid and sketch overlay always sit exactly on the picture. -->
             <div class="image-frame" id="image-frame">
               <img id="session-image" src="" alt="Reference Image" draggable="false">
+              <!-- CIELAB L* Value Map Canvas Overlay -->
+              <canvas id="value-map-overlay-canvas" class="value-map-overlay-canvas hidden"></canvas>
               <div id="image-grid-overlay" class="image-grid-overlay hidden"></div>
               <!-- Onion-Skin Sketch Overlay -->
               <div id="sketch-overlay-wrap" class="sketch-overlay-wrap hidden">

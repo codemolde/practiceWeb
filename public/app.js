@@ -3209,6 +3209,10 @@ const SketchOverlay = {
       SketchComparison.syncUI();
     }
 
+    if (typeof ColorPaletteManager !== 'undefined' && ColorPaletteManager.onSketchChanged) {
+      ColorPaletteManager.onSketchChanged();
+    }
+
     SoundFX.click();
 
     if (UI.isSafariVideoPiP && typeof PiPCanvasStreamer !== 'undefined') {
@@ -3341,6 +3345,10 @@ const SketchOverlay = {
 
     SoundFX.click();
     UI.showToast('Sketch overlay removed', 'info');
+
+    if (typeof ColorPaletteManager !== 'undefined' && ColorPaletteManager.onSketchChanged) {
+      ColorPaletteManager.onSketchChanged();
+    }
 
     if (UI.isSafariVideoPiP && typeof PiPCanvasStreamer !== 'undefined') {
       PiPCanvasStreamer.render();
@@ -4845,6 +4853,11 @@ const PiPCanvasStreamer = {
           }
           ctx.putImageData(imgData, stageX, stageY);
         } catch (e) { }
+      }
+
+      // Apply CIELAB L* Value Map overlay to canvas streamer if active
+      if (typeof ColorPaletteManager !== 'undefined' && ColorPaletteManager.valueMapOverlayActive) {
+        ColorPaletteManager.applyValueMapToContext(ctx, stageX, stageY, stageW, stageH, ColorPaletteManager.valueMapBands);
       }
 
       // Draw Proportion Grid

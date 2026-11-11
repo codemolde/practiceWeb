@@ -201,6 +201,249 @@ function classifyTemperature(C, h, imgAvgHue = null) {
   return { temp, relTemp };
 }
 
+// Precomputed linear lookup table for 8-bit sRGB channels
+const _srgbLinearLut = new Float32Array(256);
+for (let i = 0; i < 256; i++) {
+  _srgbLinearLut[i] = srgbToLinear(i);
+}
+
+/**
+ * Get band index [0..numBands - 1] for a CIELAB L* value [0..100]
+ */
+function getBandIndex(L, numBands = 3) {
+  if (numBands <= 0) return 0;
+  const clampedL = Math.max(0, Math.min(100, L));
+  const bandWidth = 100 / numBands;
+  const idx = Math.floor(clampedL / bandWidth);
+  return Math.min(numBands - 1, Math.max(0, idx));
+}
+
+/**
+ * Get standard human-readable band names for 3, 5, or 9 bands
+ */
+function getBandNames(numBands = 3) {
+  if (numBands === 3) {
+    return ['Darks', 'Midtones', 'Lights'];
+  }
+  if (numBands === 5) {
+    return ['Deep Darks', 'Darks', 'Midtones', 'Lights', 'Highlights'];
+  }
+  if (numBands === 9) {
+    return [
+      'Band 1', 'Band 2', 'Band 3',
+      'Band 4', 'Band 5', 'Band 6',
+      'Band 7', 'Band 8', 'Band 9'
+    ];
+  }
+  const names = [];
+  for (let i = 1; i <= numBands; i++) {
+    names.push(`Band ${i}`);
+  }
+  return names;
+}
+
+/**
+ * Convert CIELAB L* (0..100) to representative neutral gray sRGB channel [0..255]
+ */
+function labLightnessToSrgbGray(L) {
+  L = Math.max(0, Math.min(100, L));
+  const eps = 216 / 24389;
+  const kappa = 24389 / 27;
+  let yr;
+  if (L > 8) {
+    const fy = (L + 16) / 116;
+    yr = fy * fy * fy;
+  } else {
+    yr = L / kappa;
+  }
+  return linearToSrgb(yr);
+}
+
+/**
+ * Get representative neutral midpoint gray colors for each value band
+ */
+function getBandColors(numBands = 3) {
+  const colors = [];
+  for (let k = 0; k < numBands; k++) {
+    const L = ((k + 0.5) / numBands) * 100;
+    const g = labLightnessToSrgbGray(L);
+    const hex = '#' + [g, g, g].map(x => x.toString(16).padStart(2, '0')).join('').toUpperCase();
+    colors.push({
+      r: g,
+      g: g,
+      b: g,
+      hex,
+      L
+    });
+  }
+  return colors;
+}
+
+/**
+ * Distribute integer percentages to guarantee sum === 100%
+ * using the Hare-Niemeyer / Largest Remainder Method
+ */
+function calculateBandPercentages(counts) {
+  if (!counts || counts.length === 0) return [];
+  const total = counts.reduce((acc, c) => acc + c, 0);
+  if (total === 0) {
+    return new Array(counts.length).fill(0);
+  }
+
+  const rawPcts = counts.map(c => (c / total) * 100);
+  const floors = rawPcts.map(p => Math.floor(p));
+  const currentSum = floors.reduce((acc, f) => acc + f, 0);
+  const remainderNeeded = 100 - currentSum;
+
+  const remainders = rawPcts.map((p, idx) => ({
+    idx,
+    rem: p - floors[idx]
+  }));
+
+  remainders.sort((a, b) => b.rem - a.rem);
+
+  const finalPcts = floors.slice();
+  for (let i = 0; i < remainderNeeded; i++) {
+    finalPcts[remainders[i % remainders.length].idx] += 1;
+  }
+
+  return finalPcts;
+}
+
+/**
+ * Compute CIELAB L* value bands breakdown from ImageData
+ */
+function computeValueBands(imageData, numBands = 3) {
+  numBands = [3, 5, 9].includes(numBands) ? numBands : 3;
+  const counts = new Array(numBands).fill(0);
+  const data = imageData && imageData.data ? imageData.data : [];
+  const bandWidth = 100 / numBands;
+
+  let totalValidPixels = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    const a = data[i + 3];
+    if (a < 128) continue; // Skip transparent pixels
+
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+
+    const Y = 0.2126729 * _srgbLinearLut[r] + 0.7151522 * _srgbLinearLut[g] + 0.0721750 * _srgbLinearLut[b];
+    const fy = Y > 0.00885645167 ? Math.cbrt(Y) : (903.296296 * Y + 16) / 116;
+    const L = Math.max(0, Math.min(100, 116 * fy - 16));
+
+    const bandIdx = Math.min(numBands - 1, Math.max(0, Math.floor(L / bandWidth)));
+    counts[bandIdx]++;
+    totalValidPixels++;
+  }
+
+  const percentages = calculateBandPercentages(counts);
+  const names = getBandNames(numBands);
+  const colors = getBandColors(numBands);
+
+  const bands = [];
+  for (let i = 0; i < numBands; i++) {
+    const minL = i * bandWidth;
+    const maxL = (i + 1) * bandWidth;
+    bands.push({
+      index: i,
+      name: names[i],
+      count: counts[i],
+      percentage: percentages[i],
+      color: colors[i],
+      range: { min: Math.round(minL), max: Math.round(maxL) }
+    });
+  }
+
+  return {
+    numBands,
+    totalPixels: totalValidPixels,
+    counts,
+    percentages,
+    bands
+  };
+}
+
+/**
+ * Generate a strict, factual one-line note comparing sketch value coverage to reference
+ * Note format: "your darks cover 12% more area" or "your darks cover 8% less area"
+ * Strictly numbers and deltas; zero subjective or interpretive art-teaching commentary.
+ */
+function generateDeltaNote(refPcts, sketchPcts, numBands = 3) {
+  if (!refPcts || !sketchPcts || refPcts.length === 0 || sketchPcts.length === 0) {
+    return '';
+  }
+
+  const n = Math.min(refPcts.length, sketchPcts.length, numBands);
+  if (n === 0) return '';
+
+  let maxAbsDelta = -1;
+  let bestIdx = -1;
+  let bestDelta = 0;
+
+  for (let i = 0; i < n; i++) {
+    const delta = sketchPcts[i] - refPcts[i];
+    const absDelta = Math.abs(delta);
+    if (absDelta > maxAbsDelta) {
+      maxAbsDelta = absDelta;
+      bestIdx = i;
+      bestDelta = delta;
+    }
+  }
+
+  if (bestIdx === -1 || maxAbsDelta === 0) {
+    return 'your values match the reference (0% difference)';
+  }
+
+  const names = getBandNames(n);
+  const bandName = names[bestIdx].toLowerCase();
+  const diff = Math.abs(bestDelta);
+
+  if (bestDelta > 0) {
+    return `your ${bandName} cover ${diff}% more area`;
+  } else {
+    return `your ${bandName} cover ${diff}% less area`;
+  }
+}
+
+/**
+ * Posterize an ImageData buffer to CIELAB L* representative band grays
+ * Pure canvas pixel manipulation; zero SVG filters.
+ */
+function posterizeImageDataToBands(srcData, dstData, numBands = 3) {
+  numBands = [3, 5, 9].includes(numBands) ? numBands : 3;
+  const sData = srcData.data;
+  const dData = dstData.data;
+  const bandWidth = 100 / numBands;
+  const bandColors = getBandColors(numBands);
+
+  for (let i = 0; i < sData.length; i += 4) {
+    const a = sData[i + 3];
+    if (a < 128) {
+      dData[i] = sData[i];
+      dData[i + 1] = sData[i + 1];
+      dData[i + 2] = sData[i + 2];
+      dData[i + 3] = a;
+      continue;
+    }
+    const r = sData[i];
+    const g = sData[i + 1];
+    const b = sData[i + 2];
+
+    const Y = 0.2126729 * _srgbLinearLut[r] + 0.7151522 * _srgbLinearLut[g] + 0.0721750 * _srgbLinearLut[b];
+    const fy = Y > 0.00885645167 ? Math.cbrt(Y) : (903.296296 * Y + 16) / 116;
+    const L = Math.max(0, Math.min(100, 116 * fy - 16));
+    const bandIdx = Math.min(numBands - 1, Math.max(0, Math.floor(L / bandWidth)));
+
+    const rep = bandColors[bandIdx];
+    dData[i] = rep.r;
+    dData[i + 1] = rep.g;
+    dData[i + 2] = rep.b;
+    dData[i + 3] = 255;
+  }
+  return dstData;
+}
+
 const ColorPaletteManager = {
   hudOpen: false,
   eyedropperActive: false,
@@ -219,6 +462,16 @@ const ColorPaletteManager = {
   _offscreenCtx: null,
   _thumbCanvas: null,
   _thumbCtx: null,
+  valueMapActiveTab: 'harmony', // 'harmony' or 'valuemap'
+  valueMapBands: 3, // 3, 5, or 9
+  valueMapOverlayActive: false,
+  valueMapCompareSketch: false,
+  valueMapRefResult: null,
+  valueMapSketchResult: null,
+  _valCanvas: null,
+  _valCtx: null,
+  _sketchValCanvas: null,
+  _sketchValCtx: null,
 
   get isOpen() {
     return this.hudOpen;
@@ -255,6 +508,10 @@ const ColorPaletteManager = {
         if ([1, 3, 5, 11].includes(savedSize)) {
           this.sampleSize = savedSize;
         }
+        const savedBands = parseInt(localStorage.getItem('art_palette_valuemap_bands'), 10);
+        if ([3, 5, 9].includes(savedBands)) {
+          this.valueMapBands = savedBands;
+        }
       }
     } catch (e) {}
   },
@@ -276,6 +533,12 @@ const ColorPaletteManager = {
     if (munsellBtn) {
       munsellBtn.classList.toggle('active', this.valueMode === 'munsell');
     }
+
+    // Reflect Value Map bands
+    const bandButtons = document.querySelectorAll('.btn-val-bands');
+    bandButtons.forEach(btn => {
+      btn.classList.toggle('active', parseInt(btn.dataset.bands, 10) === this.valueMapBands);
+    });
   },
 
   setValueMode(mode) {
@@ -448,6 +711,37 @@ const ColorPaletteManager = {
       stage.addEventListener('pointerleave', () => this.onStagePointerLeave());
       stage.addEventListener('click', (e) => this.onStageClick(e));
     }
+
+    // Palette HUD Tab Switcher (Palette & Harmony vs Value Map)
+    const tabHarmony = document.getElementById('tab-palette-harmony');
+    if (tabHarmony) {
+      tabHarmony.addEventListener('click', () => this.setActiveTab('harmony'));
+    }
+    const tabValueMap = document.getElementById('tab-palette-valuemap');
+    if (tabValueMap) {
+      tabValueMap.addEventListener('click', () => this.setActiveTab('valuemap'));
+    }
+
+    // Value Map bands buttons (3, 5, 9)
+    const valBandButtons = document.querySelectorAll('.btn-val-bands');
+    valBandButtons.forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.setValueMapBands(btn.dataset.bands);
+      });
+    });
+
+    // Value Map overlay toggle
+    const btnValOverlay = document.getElementById('btn-toggle-valuemap-overlay');
+    if (btnValOverlay) {
+      btnValOverlay.addEventListener('click', () => this.toggleValueMapOverlay());
+    }
+
+    // Value Map compare sketch toggle
+    const btnCompare = document.getElementById('btn-toggle-sketch-compare');
+    if (btnCompare) {
+      btnCompare.addEventListener('click', () => this.toggleSketchCompare());
+    }
   },
 
   toggleCopyMenu(forceState = null) {
@@ -521,8 +815,11 @@ const ColorPaletteManager = {
         FloatingWindowManager.bringToFront(hud);
       }
       const img = document.getElementById('session-image');
-      if (img && img.complete && img.naturalWidth > 0 && this.dominantColors.length === 0) {
-        this.extractPalette(img);
+      if (img && img.complete && img.naturalWidth > 0) {
+        if (this.dominantColors.length === 0) {
+          this.extractPalette(img);
+        }
+        this.updateValueMapUI();
       }
     } else {
       if (this.eyedropperActive) {
@@ -554,6 +851,10 @@ const ColorPaletteManager = {
   onImageLoaded(imgEl) {
     this.dominantColors = [];
     this.extractPalette(imgEl);
+    this.updateValueMapUI();
+    if (this.valueMapOverlayActive) {
+      this.renderValueMapOverlay();
+    }
     this.hideLoupe();
   },
 
@@ -1142,8 +1443,282 @@ const ColorPaletteManager = {
     this.sampledColors = [];
     this.renderSampledSwatches();
     if (typeof SoundFX !== 'undefined' && SoundFX.click) SoundFX.click();
+  },
+
+  // ==================== VALUE MAP METHODS ====================
+
+  setActiveTab(tab) {
+    if (tab !== 'harmony' && tab !== 'valuemap') return;
+    this.valueMapActiveTab = tab;
+
+    if (typeof document !== 'undefined') {
+      const tabHarm = document.getElementById('tab-palette-harmony');
+      const tabVal = document.getElementById('tab-palette-valuemap');
+      const viewHarm = document.getElementById('palette-view-harmony');
+      const viewVal = document.getElementById('palette-view-valuemap');
+
+      if (tabHarm) tabHarm.classList.toggle('active', tab === 'harmony');
+      if (tabVal) tabVal.classList.toggle('active', tab === 'valuemap');
+      if (viewHarm) viewHarm.classList.toggle('hidden', tab !== 'harmony');
+      if (viewVal) viewVal.classList.toggle('hidden', tab !== 'valuemap');
+
+      if (tab === 'valuemap') {
+        this.updateValueMapUI();
+      }
+    }
+    if (typeof SoundFX !== 'undefined' && SoundFX.click) SoundFX.click();
+  },
+
+  setValueMapBands(bands) {
+    bands = parseInt(bands, 10);
+    if (![3, 5, 9].includes(bands)) return;
+    this.valueMapBands = bands;
+
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('art_palette_valuemap_bands', bands);
+      }
+    } catch (e) {}
+
+    if (typeof document !== 'undefined') {
+      document.querySelectorAll('.btn-val-bands').forEach(btn => {
+        btn.classList.toggle('active', parseInt(btn.dataset.bands, 10) === bands);
+      });
+    }
+
+    this.updateValueMapUI();
+    if (this.valueMapOverlayActive) {
+      this.renderValueMapOverlay();
+    }
+    if (typeof SoundFX !== 'undefined' && SoundFX.click) SoundFX.click();
+  },
+
+  toggleValueMapOverlay(forceState = null) {
+    const next = forceState !== null ? forceState : !this.valueMapOverlayActive;
+    this.valueMapOverlayActive = next;
+
+    if (typeof document !== 'undefined') {
+      const btn = document.getElementById('btn-toggle-valuemap-overlay');
+      const label = document.getElementById('valuemap-overlay-btn-label');
+      if (btn) btn.classList.toggle('active', this.valueMapOverlayActive);
+      if (label) label.textContent = this.valueMapOverlayActive ? 'Overlay ON' : 'Overlay Map';
+    }
+
+    this.renderValueMapOverlay();
+    if (typeof SoundFX !== 'undefined' && SoundFX.toolToggle) SoundFX.toolToggle();
+  },
+
+  toggleSketchCompare(forceState = null) {
+    const next = forceState !== null ? forceState : !this.valueMapCompareSketch;
+    this.valueMapCompareSketch = next;
+
+    if (typeof document !== 'undefined') {
+      const btn = document.getElementById('btn-toggle-sketch-compare');
+      const label = document.getElementById('sketch-compare-btn-label');
+      const section = document.getElementById('value-map-sketch-section');
+      if (btn) btn.classList.toggle('active', this.valueMapCompareSketch);
+      if (label) label.textContent = this.valueMapCompareSketch ? 'Compare ON' : 'Compare Sketch';
+      if (section) section.classList.toggle('hidden', !this.valueMapCompareSketch);
+    }
+
+    if (this.valueMapCompareSketch) {
+      this.updateValueMapUI();
+    }
+    if (typeof SoundFX !== 'undefined' && SoundFX.click) SoundFX.click();
+  },
+
+  onSketchChanged() {
+    if (this.valueMapCompareSketch) {
+      this.updateValueMapUI();
+    }
+  },
+
+  renderStackedBar(containerId, bands) {
+    if (typeof document === 'undefined') return;
+    const barEl = document.getElementById(containerId);
+    if (!barEl) return;
+
+    if (!bands || bands.length === 0) {
+      barEl.innerHTML = '';
+      return;
+    }
+
+    barEl.innerHTML = bands.map(b => {
+      const pct = b.percentage;
+      if (pct <= 0) return '';
+      // Contrast text color: white for dark bands L < 55, dark for light bands L >= 55
+      const textColor = b.color.L < 55 ? '#FFFFFF' : '#111111';
+      const showLabel = pct >= 8;
+      const title = `${b.name}: ${pct}% (L* ${b.range.min}–${b.range.max})`;
+
+      return `
+        <div class="value-map-bar-segment" style="width: ${pct}%; background-color: ${b.color.hex};" title="${title}">
+          ${showLabel ? `<span class="value-map-segment-label" style="color: ${textColor};">${pct}%</span>` : ''}
+        </div>
+      `;
+    }).join('');
+  },
+
+  renderLegend(containerId, bands) {
+    if (typeof document === 'undefined') return;
+    const legendEl = document.getElementById(containerId);
+    if (!legendEl) return;
+
+    if (!bands || bands.length === 0) {
+      legendEl.innerHTML = '';
+      return;
+    }
+
+    legendEl.innerHTML = bands.map(b => {
+      return `
+        <div class="value-map-legend-item" title="${b.name}: ${b.percentage}%">
+          <span class="value-map-legend-swatch" style="background-color: ${b.color.hex};"></span>
+          <span class="value-map-legend-name">${b.name}</span>
+          <span class="value-map-legend-range">(L* ${b.range.min}–${b.range.max})</span>
+          <strong class="value-map-legend-pct">${b.percentage}%</strong>
+        </div>
+      `;
+    }).join('');
+  },
+
+  updateValueMapUI() {
+    if (typeof document === 'undefined') return;
+
+    // 1. Analyze reference image
+    const refImg = document.getElementById('session-image');
+    if (refImg && refImg.complete && refImg.naturalWidth > 0) {
+      if (!this._valCanvas) {
+        this._valCanvas = document.createElement('canvas');
+        this._valCanvas.width = 160;
+        this._valCanvas.height = 160;
+        this._valCtx = this._valCanvas.getContext('2d', { willReadFrequently: true });
+      }
+      try {
+        this._valCtx.drawImage(refImg, 0, 0, 160, 160);
+        const refData = this._valCtx.getImageData(0, 0, 160, 160);
+        this.valueMapRefResult = computeValueBands(refData, this.valueMapBands);
+
+        this.renderStackedBar('value-map-ref-bar', this.valueMapRefResult.bands);
+        this.renderLegend('value-map-ref-legend', this.valueMapRefResult.bands);
+      } catch (e) {
+        console.warn('[ColorPaletteManager] Failed to analyze reference image values:', e);
+      }
+    }
+
+    // 2. If sketch compare is active, analyze sketch
+    if (this.valueMapCompareSketch) {
+      const sketchImg = document.getElementById('sketch-overlay-img');
+      const sketchContent = document.getElementById('value-map-sketch-content');
+      const sketchEmpty = document.getElementById('value-map-sketch-empty');
+      const deltaNote = document.getElementById('value-map-delta-note');
+
+      const isSketchLoaded = sketchImg && sketchImg.src && sketchImg.complete && sketchImg.naturalWidth > 0;
+
+      if (isSketchLoaded) {
+        if (sketchContent) sketchContent.classList.remove('hidden');
+        if (sketchEmpty) sketchEmpty.classList.add('hidden');
+
+        if (!this._sketchValCanvas) {
+          this._sketchValCanvas = document.createElement('canvas');
+          this._sketchValCanvas.width = 160;
+          this._sketchValCanvas.height = 160;
+          this._sketchValCtx = this._sketchValCanvas.getContext('2d', { willReadFrequently: true });
+        }
+        try {
+          this._sketchValCtx.clearRect(0, 0, 160, 160);
+          this._sketchValCtx.drawImage(sketchImg, 0, 0, 160, 160);
+          const sketchData = this._sketchValCtx.getImageData(0, 0, 160, 160);
+          this.valueMapSketchResult = computeValueBands(sketchData, this.valueMapBands);
+
+          this.renderStackedBar('value-map-sketch-bar', this.valueMapSketchResult.bands);
+          this.renderLegend('value-map-sketch-legend', this.valueMapSketchResult.bands);
+
+          // Compute and display factual one-line delta note
+          if (this.valueMapRefResult && deltaNote) {
+            const note = generateDeltaNote(
+              this.valueMapRefResult.percentages,
+              this.valueMapSketchResult.percentages,
+              this.valueMapBands
+            );
+            deltaNote.textContent = note;
+            deltaNote.classList.remove('hidden');
+          }
+        } catch (e) {
+          console.warn('[ColorPaletteManager] Failed to analyze sketch values:', e);
+        }
+      } else {
+        if (sketchContent) sketchContent.classList.add('hidden');
+        if (sketchEmpty) sketchEmpty.classList.remove('hidden');
+        if (deltaNote) deltaNote.classList.add('hidden');
+      }
+    }
+  },
+
+  renderValueMapOverlay() {
+    if (typeof document === 'undefined') return;
+    const canvas = document.getElementById('value-map-overlay-canvas');
+    if (!canvas) return;
+
+    if (!this.valueMapOverlayActive) {
+      canvas.classList.add('hidden');
+      return;
+    }
+
+    const img = document.getElementById('session-image');
+    if (!img || !img.complete || !img.naturalWidth || !img.naturalHeight) {
+      canvas.classList.add('hidden');
+      return;
+    }
+
+    try {
+      const nw = img.naturalWidth;
+      const nh = img.naturalHeight;
+      const maxDim = 1920;
+      const scale = Math.min(1, maxDim / Math.max(nw, nh));
+      const cw = Math.max(10, Math.round(nw * scale));
+      const ch = Math.max(10, Math.round(nh * scale));
+
+      if (canvas.width !== cw || canvas.height !== ch) {
+        canvas.width = cw;
+        canvas.height = ch;
+      }
+
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0, cw, ch);
+      const imgData = ctx.getImageData(0, 0, cw, ch);
+      posterizeImageDataToBands(imgData, imgData, this.valueMapBands);
+      ctx.putImageData(imgData, 0, 0);
+
+      canvas.classList.remove('hidden');
+    } catch (e) {
+      console.warn('[ColorPaletteManager] Failed to render value map overlay:', e);
+    }
+
+    if (typeof UI !== 'undefined' && UI.isSafariVideoPiP && typeof PiPCanvasStreamer !== 'undefined') {
+      PiPCanvasStreamer.render();
+    }
+  },
+
+  applyValueMapToContext(ctx, stageX, stageY, stageW, stageH, numBands = 3) {
+    if (!ctx || stageW <= 0 || stageH <= 0) return;
+    try {
+      const imgData = ctx.getImageData(stageX, stageY, stageW, stageH);
+      posterizeImageDataToBands(imgData, imgData, numBands);
+      ctx.putImageData(imgData, stageX, stageY);
+    } catch (e) {
+      console.warn('[ColorPaletteManager] Failed to apply value map to context:', e);
+    }
   }
 };
+
+ColorPaletteManager.getBandIndex = getBandIndex;
+ColorPaletteManager.getBandNames = getBandNames;
+ColorPaletteManager.getBandColors = getBandColors;
+ColorPaletteManager.labLightnessToSrgbGray = labLightnessToSrgbGray;
+ColorPaletteManager.calculateBandPercentages = calculateBandPercentages;
+ColorPaletteManager.computeValueBands = computeValueBands;
+ColorPaletteManager.generateDeltaNote = generateDeltaNote;
+ColorPaletteManager.posterizeImageDataToBands = posterizeImageDataToBands;
 
 if (typeof window !== 'undefined') {
   window.ColorPaletteManager = ColorPaletteManager;
@@ -1160,4 +1735,12 @@ if (typeof module !== 'undefined' && module.exports) {
   ColorPaletteManager.deltaE76 = deltaE76;
   ColorPaletteManager.deltaE2000 = deltaE2000;
   ColorPaletteManager.classifyTemperature = classifyTemperature;
+  ColorPaletteManager.getBandIndex = getBandIndex;
+  ColorPaletteManager.getBandNames = getBandNames;
+  ColorPaletteManager.getBandColors = getBandColors;
+  ColorPaletteManager.labLightnessToSrgbGray = labLightnessToSrgbGray;
+  ColorPaletteManager.calculateBandPercentages = calculateBandPercentages;
+  ColorPaletteManager.computeValueBands = computeValueBands;
+  ColorPaletteManager.generateDeltaNote = generateDeltaNote;
+  ColorPaletteManager.posterizeImageDataToBands = posterizeImageDataToBands;
 }
