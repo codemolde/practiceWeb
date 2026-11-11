@@ -1249,29 +1249,8 @@
                     </svg></span>
                   <strong class="palette-hud-title" title="Dominant Palette & Lighting (sRGB browser-decoded; not ICC-profile accurate)">Dominant Palette & Lighting</strong>
                   <span class="palette-srgb-notice" title="Values are computed in standard sRGB as decoded by the browser. Values are not ICC-profile accurate.">sRGB</span>
-                  <span class="palette-hud-hint">[E] toggle</span>
                 </div>
                 <div class="palette-hud-header-actions">
-                  <div class="palette-sample-size-group" title="Eyedropper Sample Size (Averaging Window)">
-                    <button type="button" class="btn-sample-size active" data-size="1" title="Single Pixel (1px)">1px</button>
-                    <button type="button" class="btn-sample-size" data-size="3" title="3×3 Average">3×3</button>
-                    <button type="button" class="btn-sample-size" data-size="5" title="5×5 Average">5×5</button>
-                    <button type="button" class="btn-sample-size" data-size="11" title="11×11 Average">11×11</button>
-                  </div>
-                  <button type="button" id="btn-toggle-munsell" class="btn btn-hud-mini"
-                    title="Toggle Value mode: CIELAB L* % (0-100) or Munsell Value (0-10)">
-                    <span id="munsell-btn-label">L* %</span>
-                  </button>
-                  <button type="button" id="btn-toggle-eyedropper" class="btn btn-hud-mini"
-                    title="Live HSB/Value Eyedropper on Hover [E]">
-                    <span class="btn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="m19 11-8-8-8.6 8.6a2 2 0 0 0 0 2.8l5.2 5.2c.8.8 2 .8 2.8 0L19 11Z" />
-                        <path d="m5 2 5 5" />
-                        <path d="m2 13 4 4" />
-                        <path d="M22 22s-2.5-.5-4-2l-3-3 5-5 2 2c1.5 1.5 2 4 2 4l-2 4Z" />
-                      </svg></span> <span id="eyedropper-btn-label">Eyedropper Off</span>
-                  </button>
                   <button type="button" id="btn-min-palette-hud" class="btn-dock-close"
                     title="Minimize / Expand Palette HUD">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
@@ -1286,6 +1265,30 @@
                       <line x1="6" y1="6" x2="18" y2="18" />
                     </svg></button>
                 </div>
+              </div>
+
+              <!-- Compact Eyedropper & Color Controls Toolbar -->
+              <div class="palette-hud-toolbar">
+                <button type="button" id="btn-toggle-eyedropper" class="btn btn-hud-mini"
+                  title="Live HSB/Value Eyedropper on Hover [E]">
+                  <span class="btn-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="m19 11-8-8-8.6 8.6a2 2 0 0 0 0 2.8l5.2 5.2c.8.8 2 .8 2.8 0L19 11Z" />
+                      <path d="m5 2 5 5" />
+                      <path d="m2 13 4 4" />
+                      <path d="M22 22s-2.5-.5-4-2l-3-3 5-5 2 2c1.5 1.5 2 4 2 4l-2 4Z" />
+                    </svg></span> <span id="eyedropper-btn-label">Eyedropper Off</span>
+                </button>
+                <div class="palette-sample-size-group" title="Eyedropper Sample Size (Averaging Window)">
+                  <button type="button" class="btn-sample-size active" data-size="1" title="Single Pixel (1px)">1px</button>
+                  <button type="button" class="btn-sample-size" data-size="3" title="3×3 Average">3×3</button>
+                  <button type="button" class="btn-sample-size" data-size="5" title="5×5 Average">5×5</button>
+                  <button type="button" class="btn-sample-size" data-size="11" title="11×11 Average">11×11</button>
+                </div>
+                <button type="button" id="btn-toggle-munsell" class="btn btn-hud-mini"
+                  title="Toggle Value mode: CIELAB L* % (0-100) or Munsell Value (0-10)">
+                  <span id="munsell-btn-label">L* %</span>
+                </button>
               </div>
 
               <!-- View Tabs: Harmony vs Value Map vs Gamut Mask -->
