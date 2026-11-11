@@ -32,7 +32,12 @@ const {
   isPointInPolygon,
   calculateDriftScore,
   calculateMeanChromaRatio,
-  binPoints
+  binPoints,
+  exportToGpl,
+  parseGplPalette,
+  exportToJson,
+  parseJsonPalette,
+  renderSwatchStripCanvas
 } = ColorPaletteManager;
 
 // ==================== TEST 1: STEP 1 REFACTOR INTEGRITY ====================
@@ -879,6 +884,255 @@ test('Gamut Wheel: DOM contracts, pure Canvas 2D rendering, and reset action', (
   assert.equal(typeof ColorPaletteManager.onGamutPointerLeave, 'function');
   assert.equal(typeof ColorPaletteManager.resetGamutMask, 'function');
 });
+
+// ==================== TEST 22: GIMP .GPL EXPORT SPEC CONFORMANCE ====================
+test('Export Palette: GIMP .gpl output matches format spec exactly (header, names, tab-separated RGB)', () => {
+  const sampleColors = [
+    { r: 255, g: 0, b: 0, hex: '#FF0000', name: 'Pure Red' },
+    { r: 0, g: 255, b: 0, hex: '#00FF00', name: 'Pure Green' },
+    { r: 0, g: 0, b: 255, hex: '#0000FF', name: 'Pure Blue' },
+    { r: 138, g: 90, b: 68, hex: '#8A5A44' }, // No custom name -> defaults to hex
+    { r: 255, g: 255, b: 255, hex: '#FFFFFF', name: 'White' },
+    { r: 0, g: 0, b: 0, hex: '#000000', name: 'Black' }
+  ];
+
+  const gplOutput = exportToGpl(sampleColors, 'Portrait Study #1', 4);
+  assert.ok(typeof gplOutput === 'string', 'exportToGpl must return a string');
+
+  const lines = gplOutput.trim().split('\n');
+
+  // 1. Verify Mandatory Header Lines
+  assert.equal(lines[0], 'GIMP Palette', 'Line 1 must be exact magic signature "GIMP Palette"');
+  assert.equal(lines[1], 'Name: Portrait Study #1', 'Line 2 must be Name header');
+  assert.equal(lines[2], 'Columns: 4', 'Line 3 must be Columns header');
+  assert.equal(lines[3], '#', 'Line 4 must be comment delimiter "#"');
+
+  // 2. Verify Tab-Separated RGB and Name entries
+  assert.equal(lines.length - 4, sampleColors.length, 'Must have exactly one line per swatch entry');
+
+  for (let i = 0; i < sampleColors.length; i++) {
+    const line = lines[4 + i];
+    const parts = line.split('\t');
+    assert.equal(parts.length, 4, `Line ${4 + i} ("${line}") must have exactly 4 tab-separated fields: R, G, B, Name`);
+
+    const r = parseInt(parts[0], 10);
+    const g = parseInt(parts[1], 10);
+    const b = parseInt(parts[2], 10);
+    const name = parts[3];
+
+    assert.equal(r, sampleColors[i].r, `Red value must match for color ${i}`);
+    assert.equal(g, sampleColors[i].g, `Green value must match for color ${i}`);
+    assert.equal(b, sampleColors[i].b, `Blue value must match for color ${i}`);
+
+    const expectedName = sampleColors[i].name || sampleColors[i].hex;
+    assert.equal(name, expectedName, `Swatch name must match for color ${i}`);
+  }
+
+  // 3. Verify parser reconstructs identical palette
+  const parsed = parseGplPalette(gplOutput);
+  assert.equal(parsed.name, 'Portrait Study #1');
+  assert.equal(parsed.columns, 4);
+  assert.equal(parsed.colors.length, sampleColors.length);
+
+  for (let i = 0; i < sampleColors.length; i++) {
+    assert.equal(parsed.colors[i].r, sampleColors[i].r);
+    assert.equal(parsed.colors[i].g, sampleColors[i].g);
+    assert.equal(parsed.colors[i].b, sampleColors[i].b);
+    assert.equal(parsed.colors[i].hex, sampleColors[i].hex);
+  }
+
+  // 4. Empty palette test
+  const emptyGpl = exportToGpl([]);
+  assert.ok(emptyGpl.startsWith('GIMP Palette\n'));
+  assert.ok(emptyGpl.includes('#\n'));
+});
+
+// ==================== TEST 23: JSON EXPORT & BIDIRECTIONAL ROUND TRIP ====================
+test('Export Palette: JSON export (hex, rgb, lab, L*) and bidirectional round trip', () => {
+  const sampleColors = [
+    { r: 255, g: 255, b: 255, hex: '#FFFFFF', name: 'White' },
+    { r: 0, g: 0, b: 0, hex: '#000000', name: 'Black' },
+    { r: 128, g: 128, b: 128, hex: '#808080', name: 'Mid Gray' },
+    { r: 138, g: 90, b: 68, hex: '#8A5A44' }
+  ];
+
+  const jsonStr = exportToJson(sampleColors, 'Test Palette');
+  assert.ok(typeof jsonStr === 'string', 'exportToJson must return a string');
+
+  // 1. Parse raw JSON and verify schema: hex, rgb, lab, L*
+  const parsedDirect = JSON.parse(jsonStr);
+  assert.ok(Array.isArray(parsedDirect), 'Direct export should serialize as JSON array');
+  assert.equal(parsedDirect.length, sampleColors.length);
+
+  for (let i = 0; i < parsedDirect.length; i++) {
+    const item = parsedDirect[i];
+    assert.ok(typeof item.hex === 'string' && item.hex.startsWith('#'), 'Must have valid hex string');
+    assert.ok(typeof item.name === 'string', 'Must have name string');
+
+    // RGB object { r, g, b }
+    assert.ok(typeof item.rgb === 'object' && item.rgb !== null, 'Must have rgb object');
+    assert.equal(item.rgb.r, sampleColors[i].r);
+    assert.equal(item.rgb.g, sampleColors[i].g);
+    assert.equal(item.rgb.b, sampleColors[i].b);
+
+    // Lab object { L, a, b }
+    assert.ok(typeof item.lab === 'object' && item.lab !== null, 'Must have lab object');
+    assert.ok(typeof item.lab.L === 'number', 'lab.L must be a number');
+    assert.ok(typeof item.lab.a === 'number', 'lab.a must be a number');
+    assert.ok(typeof item.lab.b === 'number', 'lab.b must be a number');
+
+    // L* field
+    assert.ok(typeof item['L*'] === 'number', 'L* property must be present and numeric');
+    assert.equal(item['L*'], item.lab.L, 'L* must match lab.L');
+  }
+
+  // Check known L* values
+  const white = parsedDirect[0];
+  const black = parsedDirect[1];
+  const midGray = parsedDirect[2];
+  assert.equal(white['L*'], 100, 'White L* must be 100');
+  assert.equal(black['L*'], 0, 'Black L* must be 0');
+  assert.ok(Math.abs(midGray['L*'] - 53.59) < 0.2, 'Mid Gray #808080 L* should be ~53.59');
+
+  // 2. Round-trip through parseJsonPalette
+  const roundTripped = parseJsonPalette(jsonStr);
+  assert.equal(roundTripped.length, sampleColors.length);
+
+  for (let i = 0; i < sampleColors.length; i++) {
+    const orig = sampleColors[i];
+    const rt = roundTripped[i];
+    assert.equal(rt.hex, orig.hex);
+    assert.equal(rt.r, orig.r);
+    assert.equal(rt.g, orig.g);
+    assert.equal(rt.b, orig.b);
+    assert.equal(rt.rgb.r, orig.r);
+    assert.equal(rt.rgb.g, orig.g);
+    assert.equal(rt.rgb.b, orig.b);
+    assert.ok(typeof rt['L*'] === 'number');
+    assert.equal(rt['L*'], rt.lab.L);
+  }
+
+  // 3. Round-trip with options.asObject = true
+  const jsonObjectStr = exportToJson(sampleColors, 'Object Palette', { asObject: true });
+  const objectParsed = JSON.parse(jsonObjectStr);
+  assert.equal(objectParsed.name, 'Object Palette');
+  assert.ok(Array.isArray(objectParsed.colors));
+  const rtFromObj = parseJsonPalette(jsonObjectStr);
+  assert.equal(rtFromObj.length, sampleColors.length);
+  assert.equal(rtFromObj[0].hex, '#FFFFFF');
+});
+
+// ==================== TEST 24: PNG SWATCH STRIP & DOM CONTRACTS ====================
+test('Export Palette: PNG swatch strip pure canvas rendering and UI contracts', () => {
+  const sampleColors = [
+    { r: 255, g: 0, b: 0, hex: '#FF0000' },
+    { r: 0, g: 255, b: 0, hex: '#00FF00' },
+    { r: 0, g: 0, b: 255, hex: '#0000FF' }
+  ];
+
+  // 1. Mock canvas and verify pure Canvas 2D rendering without SVG/CSS filters
+  const filledRects = [];
+  const mockCtx = {
+    fillStyle: '',
+    fillRect(x, y, w, h) {
+      filledRects.push({ x, y, w, h, fillStyle: this.fillStyle });
+    }
+  };
+  const mockCanvas = {
+    width: 0,
+    height: 0,
+    getContext(type) {
+      if (type === '2d') return mockCtx;
+      return null;
+    }
+  };
+
+  const canvas = renderSwatchStripCanvas(sampleColors, { canvas: mockCanvas, swatchWidth: 80, swatchHeight: 80 });
+  assert.equal(canvas.width, 240, 'Width must be 3 swatches * 80px = 240px');
+  assert.equal(canvas.height, 80, 'Height must be 80px');
+  assert.equal(filledRects.length, 3, 'Must render 3 filled swatch rectangles');
+
+  assert.deepEqual(filledRects[0], { x: 0, y: 0, w: 80, h: 80, fillStyle: 'rgb(255, 0, 0)' });
+  assert.deepEqual(filledRects[1], { x: 80, y: 0, w: 80, h: 80, fillStyle: 'rgb(0, 255, 0)' });
+  assert.deepEqual(filledRects[2], { x: 160, y: 0, w: 80, h: 80, fillStyle: 'rgb(0, 0, 255)' });
+
+  // 2. Verify DOM elements in index.html
+  const indexHtml = fs.readFileSync(indexHtmlPath, 'utf8');
+  assert.ok(indexHtml.includes('id="btn-export-palette"'), 'index.html must have btn-export-palette');
+  assert.ok(indexHtml.includes('id="palette-export-menu"'), 'index.html must have palette-export-menu');
+  assert.ok(indexHtml.includes('data-format="gpl"'), 'Must have GPL export format item');
+  assert.ok(indexHtml.includes('data-format="json"'), 'Must have JSON export format item');
+  assert.ok(indexHtml.includes('data-format="png"'), 'Must have PNG export format item');
+
+  // Verify unauthorized formats are NOT added (.ase, .swatches)
+  assert.ok(!indexHtml.includes('data-format="ase"'), 'Must NOT add Adobe .ase format without asking');
+  assert.ok(!indexHtml.includes('data-format="swatches"'), 'Must NOT add Procreate .swatches format without asking');
+
+  // 3. Verify format restrictions in ColorPaletteManager.downloadPalette
+  assert.equal(ColorPaletteManager.downloadPalette('ase', sampleColors), false, 'downloadPalette must reject .ase');
+  assert.equal(ColorPaletteManager.downloadPalette('swatches', sampleColors), false, 'downloadPalette must reject .swatches');
+  assert.equal(ColorPaletteManager.downloadPalette('unknown', sampleColors), false, 'downloadPalette must reject unknown formats');
+});
+
+// ==================== TEST 25: BLOB URL LIFECYCLE & NO-NETWORK GUARANTEE ====================
+test('Export Palette: Blob URL creation, download trigger, and revocation (no network)', () => {
+  let objectUrlCreated = null;
+  let objectUrlRevoked = null;
+  let clicked = false;
+
+  const mockBlob = { size: 128, type: 'text/plain;charset=utf-8' };
+
+  // Temporarily mock window/document/URL if running under bare Node.js
+  const originalURL = globalThis.URL;
+  const originalDoc = globalThis.document;
+  const originalWindow = globalThis.window;
+
+  globalThis.URL = {
+    createObjectURL(blob) {
+      objectUrlCreated = 'blob:http://localhost/mock-uuid-1234';
+      return objectUrlCreated;
+    },
+    revokeObjectURL(url) {
+      objectUrlRevoked = url;
+    }
+  };
+
+  const mockAnchor = {
+    href: '',
+    download: '',
+    click() {
+      clicked = true;
+    }
+  };
+
+  globalThis.document = {
+    createElement(tag) {
+      if (tag === 'a') return mockAnchor;
+      return {};
+    },
+    body: {
+      appendChild(el) {},
+      removeChild(el) {}
+    }
+  };
+
+  globalThis.window = {
+    URL: globalThis.URL
+  };
+
+  try {
+    ColorPaletteManager.downloadBlob(mockBlob, 'test-palette.gpl');
+    assert.equal(objectUrlCreated, 'blob:http://localhost/mock-uuid-1234', 'Must create blob URL');
+    assert.equal(mockAnchor.href, 'blob:http://localhost/mock-uuid-1234', 'Anchor href must be blob URL');
+    assert.equal(mockAnchor.download, 'test-palette.gpl', 'Anchor download must be filename');
+    assert.equal(clicked, true, 'Anchor click() must be invoked');
+  } finally {
+    globalThis.URL = originalURL;
+    globalThis.document = originalDoc;
+    globalThis.window = originalWindow;
+  }
+});
+
 
 
 

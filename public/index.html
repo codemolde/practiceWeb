@@ -1302,7 +1302,39 @@
               <div id="palette-view-harmony" class="palette-view-panel">
                 <!-- Dominant Swatches Bar -->
                 <div class="palette-swatches-section">
-                  <div class="palette-swatches-label">Dominant Light & Shadow Harmony <span class="palette-method-tag" title="Color clusters merged in CIELAB space using CIEDE2000 (ΔE < 11)">(CIEDE2000 ΔE&lt;11)</span>:</div>
+                  <div class="palette-swatches-header">
+                    <div class="palette-swatches-label">Dominant Light & Shadow Harmony <span class="palette-method-tag" title="Color clusters merged in CIELAB space using CIEDE2000 (ΔE < 11)">(CIEDE2000 ΔE&lt;11)</span>:</div>
+                    <div class="palette-export-group">
+                      <button type="button" id="btn-export-palette" class="btn-palette-export" title="Export palette (.gpl, JSON, PNG)">
+                        <span class="btn-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
+                        <span>Export</span>
+                        <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                      </button>
+                      <div id="palette-export-menu" class="palette-export-menu hidden">
+                        <button type="button" class="palette-export-item" data-format="gpl" title="Export GIMP / Krita / Inkscape / Aseprite Palette (.gpl)">
+                          <span class="export-fmt-badge">GPL</span>
+                          <div class="export-fmt-info">
+                            <span class="export-fmt-title">GIMP Palette (.gpl)</span>
+                            <span class="export-fmt-desc">Text for GIMP, Krita, Aseprite</span>
+                          </div>
+                        </button>
+                        <button type="button" class="palette-export-item" data-format="json" title="Export raw JSON palette with Hex, RGB, Lab, and L* values">
+                          <span class="export-fmt-badge">JSON</span>
+                          <div class="export-fmt-info">
+                            <span class="export-fmt-title">JSON Data</span>
+                            <span class="export-fmt-desc">Hex, RGB, Lab, L* values</span>
+                          </div>
+                        </button>
+                        <button type="button" class="palette-export-item" data-format="png" title="Export PNG swatch strip image for eyedropping in drawing software">
+                          <span class="export-fmt-badge">PNG</span>
+                          <div class="export-fmt-info">
+                            <span class="export-fmt-title">PNG Swatch Strip</span>
+                            <span class="export-fmt-desc">Lossless image strip of colors</span>
+                          </div>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
                   <div id="palette-dominant-swatches" class="palette-swatches-bar">
                     <!-- Injected: 5 to 7 swatches with color fill, hex, and value -->
                   </div>

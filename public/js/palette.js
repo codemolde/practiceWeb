@@ -675,6 +675,241 @@ function binPoints(points, binSize = 4) {
   return result;
 }
 
+// ==================== PALETTE EXPORT SERIALIZERS & LOADERS ====================
+
+/**
+ * Export colors to standard GIMP Palette (.gpl) text format.
+ * Format spec:
+ * Line 1: GIMP Palette
+ * Line 2: Name: <paletteName>
+ * Line 3: Columns: <columns>
+ * Line 4: #
+ * Subsequent lines: <R>\t<G>\t<B>\t<name> (tab-separated RGB + name)
+ */
+function exportToGpl(colors, paletteName = 'Art Practice Palette', columns = 4) {
+  const safeName = (paletteName || 'Art Practice Palette').replace(/[\r\n]/g, ' ').trim();
+  const safeCols = Math.max(1, parseInt(columns, 10) || 4);
+  const lines = [
+    'GIMP Palette',
+    `Name: ${safeName}`,
+    `Columns: ${safeCols}`,
+    '#'
+  ];
+
+  if (!colors || colors.length === 0) {
+    return lines.join('\n') + '\n';
+  }
+
+  for (let i = 0; i < colors.length; i++) {
+    const c = colors[i];
+    const r = Math.max(0, Math.min(255, Math.round(c.r !== undefined ? c.r : (c.rgb ? c.rgb.r : 0))));
+    const g = Math.max(0, Math.min(255, Math.round(c.g !== undefined ? c.g : (c.rgb ? c.rgb.g : 0))));
+    const b = Math.max(0, Math.min(255, Math.round(c.b !== undefined ? c.b : (c.rgb ? c.rgb.b : 0))));
+    const defaultHex = '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('').toUpperCase();
+    const hex = c.hex || defaultHex;
+    const name = (c.name || hex).replace(/[\r\n\t]+/g, ' ').trim();
+    lines.push(`${r}\t${g}\t${b}\t${name}`);
+  }
+
+  return lines.join('\n') + '\n';
+}
+
+/**
+ * Parse standard GIMP Palette (.gpl) text into structured palette object
+ */
+function parseGplPalette(gplText) {
+  if (!gplText || typeof gplText !== 'string') {
+    return { name: '', columns: 4, colors: [] };
+  }
+  const lines = gplText.split(/\r?\n/);
+  if (lines.length === 0 || lines[0].trim() !== 'GIMP Palette') {
+    throw new Error('Invalid GIMP Palette: missing "GIMP Palette" header signature');
+  }
+
+  let name = '';
+  let columns = 4;
+  const colors = [];
+  let headerDone = false;
+
+  for (let i = 1; i < lines.length; i++) {
+    const rawLine = lines[i];
+    const trimmed = rawLine.trim();
+    if (!trimmed) continue;
+
+    if (!headerDone) {
+      if (trimmed.startsWith('Name:')) {
+        name = trimmed.substring(5).trim();
+        continue;
+      }
+      if (trimmed.startsWith('Columns:')) {
+        columns = parseInt(trimmed.substring(8).trim(), 10) || 4;
+        continue;
+      }
+      if (trimmed.startsWith('#')) {
+        headerDone = true;
+        continue;
+      }
+    }
+
+    if (trimmed.startsWith('#')) continue;
+
+    // Parse color line: R\tG\tB\tName or space-separated
+    const tabParts = rawLine.split('\t');
+    let r, g, b, colorName;
+    if (tabParts.length >= 3 && !isNaN(parseInt(tabParts[0].trim(), 10))) {
+      r = parseInt(tabParts[0].trim(), 10);
+      g = parseInt(tabParts[1].trim(), 10);
+      b = parseInt(tabParts[2].trim(), 10);
+      colorName = tabParts.slice(3).join('\t').trim();
+    } else {
+      const spaceParts = trimmed.split(/\s+/);
+      if (spaceParts.length >= 3) {
+        r = parseInt(spaceParts[0], 10);
+        g = parseInt(spaceParts[1], 10);
+        b = parseInt(spaceParts[2], 10);
+        colorName = spaceParts.slice(3).join(' ').trim();
+      } else {
+        continue;
+      }
+    }
+
+    const hex = '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('').toUpperCase();
+    const lab = srgbToLab(r, g, b);
+    const L_round = parseFloat(lab.L.toFixed(2));
+    const a_round = parseFloat(lab.a.toFixed(2));
+    const b_round = parseFloat(lab.b.toFixed(2));
+
+    colors.push({
+      name: colorName || hex,
+      hex,
+      r, g, b,
+      rgb: { r, g, b },
+      L: lab.L,
+      a: lab.a,
+      bVal: lab.b,
+      lab: { L: L_round, a: a_round, b: b_round },
+      "L*": L_round
+    });
+  }
+
+  return { name, columns, colors };
+}
+
+/**
+ * Export colors to JSON containing hex, rgb, lab, and L*
+ */
+function exportToJson(colors, paletteName = 'Art Practice Palette', options = {}) {
+  if (!colors || colors.length === 0) {
+    return options.asObject
+      ? JSON.stringify({ name: paletteName, colors: [] }, null, 2)
+      : '[]';
+  }
+
+  const items = colors.map((c, idx) => {
+    const r = Math.max(0, Math.min(255, Math.round(c.r !== undefined ? c.r : (c.rgb ? c.rgb.r : 0))));
+    const g = Math.max(0, Math.min(255, Math.round(c.g !== undefined ? c.g : (c.rgb ? c.rgb.g : 0))));
+    const b = Math.max(0, Math.min(255, Math.round(c.b !== undefined ? c.b : (c.rgb ? c.rgb.b : 0))));
+    const defaultHex = '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('').toUpperCase();
+    const hex = c.hex || defaultHex;
+
+    let L = c.L;
+    let a = c.a;
+    let bVal = c.bVal !== undefined ? c.bVal : (c.lab ? c.lab.b : undefined);
+
+    if (L === undefined || a === undefined || bVal === undefined) {
+      const lab = srgbToLab(r, g, b);
+      L = lab.L;
+      a = lab.a;
+      bVal = lab.b;
+    }
+
+    const L_num = parseFloat(Number(L).toFixed(2));
+    const a_num = parseFloat(Number(a).toFixed(2));
+    const b_num = parseFloat(Number(bVal).toFixed(2));
+    const name = (c.name || hex).replace(/[\r\n\t]+/g, ' ').trim();
+
+    return {
+      name,
+      hex,
+      rgb: { r, g, b },
+      lab: { L: L_num, a: a_num, b: b_num },
+      "L*": L_num
+    };
+  });
+
+  if (options && options.asObject) {
+    return JSON.stringify({
+      name: paletteName,
+      colors: items
+    }, null, 2);
+  }
+
+  return JSON.stringify(items, null, 2);
+}
+
+/**
+ * Parse JSON palette text or object into standardized color objects
+ */
+function parseJsonPalette(jsonInput) {
+  const data = typeof jsonInput === 'string' ? JSON.parse(jsonInput) : jsonInput;
+  const list = Array.isArray(data) ? data : (data && Array.isArray(data.colors) ? data.colors : []);
+  return list.map((item, idx) => {
+    const r = item.rgb ? item.rgb.r : (item.r !== undefined ? item.r : 0);
+    const g = item.rgb ? item.rgb.g : (item.g !== undefined ? item.g : 0);
+    const b = item.rgb ? item.rgb.b : (item.b !== undefined ? item.b : 0);
+    const hex = item.hex || '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('').toUpperCase();
+    const lab = item.lab || {};
+    const L = item['L*'] !== undefined ? item['L*'] : (lab.L !== undefined ? lab.L : (item.L || 0));
+    const a = lab.a !== undefined ? lab.a : (item.a || 0);
+    const bVal = lab.b !== undefined ? lab.b : (item.bVal !== undefined ? item.bVal : 0);
+    return {
+      name: item.name || hex,
+      hex,
+      r, g, b,
+      rgb: { r, g, b },
+      L, a, bVal,
+      lab: { L, a, b: bVal },
+      "L*": L
+    };
+  });
+}
+
+/**
+ * Render PNG swatch strip on Canvas 2D without SVG/CSS filters
+ */
+function renderSwatchStripCanvas(colors, options = {}) {
+  if (!colors || colors.length === 0) return null;
+  const swatchWidth = options.swatchWidth || 80;
+  const swatchHeight = options.swatchHeight || 80;
+  const totalW = colors.length * swatchWidth;
+  const totalH = swatchHeight;
+
+  let canvas = options.canvas;
+  if (!canvas) {
+    if (typeof document !== 'undefined') {
+      canvas = document.createElement('canvas');
+    } else {
+      return null;
+    }
+  }
+
+  canvas.width = totalW;
+  canvas.height = totalH;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return canvas;
+
+  for (let i = 0; i < colors.length; i++) {
+    const c = colors[i];
+    const r = Math.max(0, Math.min(255, Math.round(c.r !== undefined ? c.r : (c.rgb ? c.rgb.r : 0))));
+    const g = Math.max(0, Math.min(255, Math.round(c.g !== undefined ? c.g : (c.rgb ? c.rgb.g : 0))));
+    const b = Math.max(0, Math.min(255, Math.round(c.b !== undefined ? c.b : (c.rgb ? c.rgb.b : 0))));
+    ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+    ctx.fillRect(i * swatchWidth, 0, swatchWidth, swatchHeight);
+  }
+
+  return canvas;
+}
+
 const ColorPaletteManager = {
   hudOpen: false,
   eyedropperActive: false,
@@ -944,6 +1179,28 @@ const ColorPaletteManager = {
       if (!e.target.closest('.copy-dropdown-group')) {
         this.hideCopyMenu();
       }
+      if (!e.target.closest('.palette-export-group')) {
+        this.hideExportMenu();
+      }
+    });
+
+    // Export palette button & dropdown format items
+    const btnExport = document.getElementById('btn-export-palette');
+    if (btnExport) {
+      btnExport.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.toggleExportMenu();
+      });
+    }
+
+    const exportItems = document.querySelectorAll('.palette-export-item');
+    exportItems.forEach(item => {
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const fmt = item.dataset.format;
+        this.downloadPalette(fmt);
+        this.hideExportMenu();
+      });
     });
 
     // Clear sampled colors
@@ -2379,6 +2636,151 @@ const ColorPaletteManager = {
     }
     this.renderGamutWheel();
     if (typeof SoundFX !== 'undefined' && SoundFX.click) SoundFX.click();
+  },
+
+  // ==================== PALETTE EXPORT METHODS ====================
+
+  getExportColors(customColors = null) {
+    if (Array.isArray(customColors) && customColors.length > 0) {
+      return customColors;
+    }
+    if (this.dominantColors && this.dominantColors.length > 0) {
+      return this.dominantColors;
+    }
+    if (this.sampledColors && this.sampledColors.length > 0) {
+      return this.sampledColors;
+    }
+    return [];
+  },
+
+  getPaletteExportFilename() {
+    let name = 'art-palette';
+    if (typeof document !== 'undefined') {
+      const nameEl = document.getElementById('session-image-name');
+      if (nameEl && nameEl.textContent) {
+        const clean = nameEl.textContent.trim().replace(/\.[^/.]+$/, '').replace(/[^a-zA-Z0-9_-]+/g, '-');
+        if (clean) name = `${clean}-palette`;
+      }
+    }
+    return name;
+  },
+
+  downloadBlob(blob, filename) {
+    if (typeof document === 'undefined') return;
+    const urlHelper = typeof URL !== 'undefined' && URL.createObjectURL ? URL : (typeof window !== 'undefined' ? window.URL : null);
+    if (!urlHelper || !urlHelper.createObjectURL) return;
+
+    const url = urlHelper.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    if (document.body && document.body.appendChild) {
+      document.body.appendChild(a);
+    }
+    if (typeof a.click === 'function') {
+      a.click();
+    }
+    if (document.body && document.body.removeChild) {
+      document.body.removeChild(a);
+    }
+    setTimeout(() => {
+      try {
+        if (urlHelper && urlHelper.revokeObjectURL) {
+          urlHelper.revokeObjectURL(url);
+        }
+      } catch (e) {}
+    }, 1000);
+  },
+
+  downloadPalette(format = 'gpl', customColors = null) {
+    const allowed = ['gpl', 'json', 'png'];
+    const fmt = (format || '').toLowerCase().trim();
+    if (!allowed.includes(fmt)) {
+      console.warn(`[ColorPaletteManager] Unsupported export format "${format}". Only "gpl", "json", and "png" are supported.`);
+      if (typeof UI !== 'undefined' && UI.showToast) {
+        UI.showToast(`Export format "${format}" is not supported. Use GPL, JSON, or PNG.`, 'warning');
+      }
+      return false;
+    }
+
+    const colors = this.getExportColors(customColors);
+    if (!colors || colors.length === 0) {
+      if (typeof UI !== 'undefined' && UI.showToast) {
+        UI.showToast('No swatches in palette to export yet.', 'warning');
+      }
+      return false;
+    }
+
+    const baseName = this.getPaletteExportFilename();
+
+    if (fmt === 'gpl') {
+      const text = exportToGpl(colors, baseName);
+      const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+      this.downloadBlob(blob, `${baseName}.gpl`);
+      if (typeof SoundFX !== 'undefined' && SoundFX.click) SoundFX.click();
+      if (typeof UI !== 'undefined' && UI.showToast) {
+        UI.showToast(`Exported ${colors.length} swatches to ${baseName}.gpl`, 'success');
+      }
+      return true;
+    }
+
+    if (fmt === 'json') {
+      const jsonText = exportToJson(colors, baseName);
+      const blob = new Blob([jsonText], { type: 'application/json;charset=utf-8' });
+      this.downloadBlob(blob, `${baseName}.json`);
+      if (typeof SoundFX !== 'undefined' && SoundFX.click) SoundFX.click();
+      if (typeof UI !== 'undefined' && UI.showToast) {
+        UI.showToast(`Exported ${colors.length} swatches to ${baseName}.json`, 'success');
+      }
+      return true;
+    }
+
+    if (fmt === 'png') {
+      const canvas = renderSwatchStripCanvas(colors);
+      if (!canvas) return false;
+
+      const triggerDownload = (blob) => {
+        if (blob) {
+          this.downloadBlob(blob, `${baseName}.png`);
+          if (typeof SoundFX !== 'undefined' && SoundFX.click) SoundFX.click();
+          if (typeof UI !== 'undefined' && UI.showToast) {
+            UI.showToast(`Exported ${colors.length} swatches to ${baseName}.png`, 'success');
+          }
+        }
+      };
+
+      if (canvas.toBlob) {
+        canvas.toBlob(triggerDownload, 'image/png');
+      } else if (canvas.toDataURL) {
+        const dataUrl = canvas.toDataURL('image/png');
+        const binStr = atob(dataUrl.split(',')[1]);
+        const len = binStr.length;
+        const arr = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+          arr[i] = binStr.charCodeAt(i);
+        }
+        const blob = new Blob([arr], { type: 'image/png' });
+        triggerDownload(blob);
+      }
+      return true;
+    }
+
+    return false;
+  },
+
+  toggleExportMenu(forceState = null) {
+    if (typeof document === 'undefined') return;
+    const menu = document.getElementById('palette-export-menu');
+    if (!menu) return;
+    const isHidden = menu.classList.contains('hidden');
+    const show = forceState !== null ? forceState : isHidden;
+    menu.classList.toggle('hidden', !show);
+  },
+
+  hideExportMenu() {
+    if (typeof document === 'undefined') return;
+    const menu = document.getElementById('palette-export-menu');
+    if (menu) menu.classList.add('hidden');
   }
 };
 
@@ -2399,6 +2801,11 @@ ColorPaletteManager.isPointInPolygon = isPointInPolygon;
 ColorPaletteManager.calculateDriftScore = calculateDriftScore;
 ColorPaletteManager.calculateMeanChromaRatio = calculateMeanChromaRatio;
 ColorPaletteManager.binPoints = binPoints;
+ColorPaletteManager.exportToGpl = exportToGpl;
+ColorPaletteManager.parseGplPalette = parseGplPalette;
+ColorPaletteManager.exportToJson = exportToJson;
+ColorPaletteManager.parseJsonPalette = parseJsonPalette;
+ColorPaletteManager.renderSwatchStripCanvas = renderSwatchStripCanvas;
 
 if (typeof window !== 'undefined') {
   window.ColorPaletteManager = ColorPaletteManager;
@@ -2432,4 +2839,9 @@ if (typeof module !== 'undefined' && module.exports) {
   ColorPaletteManager.calculateDriftScore = calculateDriftScore;
   ColorPaletteManager.calculateMeanChromaRatio = calculateMeanChromaRatio;
   ColorPaletteManager.binPoints = binPoints;
+  ColorPaletteManager.exportToGpl = exportToGpl;
+  ColorPaletteManager.parseGplPalette = parseGplPalette;
+  ColorPaletteManager.exportToJson = exportToJson;
+  ColorPaletteManager.parseJsonPalette = parseJsonPalette;
+  ColorPaletteManager.renderSwatchStripCanvas = renderSwatchStripCanvas;
 }

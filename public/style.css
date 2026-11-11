@@ -6531,11 +6531,118 @@ body.window-dragging-active * {
   gap: 6px;
 }
 
+.palette-swatches-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .palette-swatches-label {
   font-size: 10.5px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+/* Palette Export Dropdown */
+.palette-export-group {
+  position: relative;
+  display: inline-flex;
+}
+
+.btn-palette-export {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-palette-export:hover {
+  background: var(--bg-card-hover);
+  border-color: var(--accent);
+  color: #f59e0b;
+}
+
+.palette-export-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  background: #18181b;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+  z-index: 50;
+  min-width: 210px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.palette-export-menu.hidden {
+  display: none !important;
+}
+
+.palette-export-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease;
+  width: 100%;
+}
+
+.palette-export-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.export-fmt-badge {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 4px;
+  border-radius: 3px;
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  min-width: 32px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.export-fmt-info {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.export-fmt-title {
+  font-weight: 600;
+  font-size: 11px;
+  color: #f3f4f6;
+}
+
+.export-fmt-desc {
+  font-size: 9.5px;
   color: var(--text-muted);
 }
 
