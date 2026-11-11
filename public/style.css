@@ -2100,6 +2100,7 @@ kbd {
 .image-toolbar::-webkit-scrollbar {
   width: 3px;
 }
+
 .image-toolbar::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.2);
   border-radius: 3px;
@@ -2475,15 +2476,13 @@ header button>* {
   transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-/* Open state: triggered on click of bottom Rate toggle or when timer ends / rating required */
-body:not(.pip-mode):not(.electron-float-active) .rating-area.rating-open,
-body:not(.pip-mode):not(.electron-float-active).rating-required .rating-area {
+/* Open state: triggered on click of bottom Rate toggle or when timer ends */
+body:not(.pip-mode):not(.electron-float-active) .rating-area.rating-open {
   transform: translateX(-50%) translateY(0) !important;
   pointer-events: auto !important;
 }
 
-body:not(.pip-mode):not(.electron-float-active) .rating-area.rating-open>*,
-body:not(.pip-mode):not(.electron-float-active).rating-required .rating-area>* {
+body:not(.pip-mode):not(.electron-float-active) .rating-area.rating-open>* {
   pointer-events: auto !important;
 }
 
@@ -2534,9 +2533,8 @@ body:not(.pip-mode):not(.electron-float-active).rating-required .rating-area>* {
 }
 
 /* Arrow points UP (▲) into stage when rating dock is collapsed */
-/* When open (.rating-open or .rating-required), arrow flips 180° to point DOWN (▼) to collapse */
-.rating-area.rating-open .rating-arrow-icon,
-body.rating-required .rating-area .rating-arrow-icon {
+/* When open (.rating-open), arrow flips 180° to point DOWN (▼) to collapse */
+.rating-area.rating-open .rating-arrow-icon {
   transform: rotate(180deg);
 }
 
@@ -6424,6 +6422,7 @@ body.window-dragging-active * {
     opacity: 0;
     transform: scale(0.97);
   }
+
   100% {
     opacity: 1;
     transform: scale(1);

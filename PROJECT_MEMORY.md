@@ -1,466 +1,337 @@
-# Art Practice Reference App — Project Memory
+# Art Practice Reference Studio — Project Memory
 
-> This file is for agents and future development. It tracks the project's goals, current state, known bugs, and planned features.
-
----
-
-## Project Overview
-
-A local-only web app for art reference practice with Anki-style spaced repetition. Built with Node.js + Express backend and vanilla JS/CSS frontend. All data persists in the browser's localStorage.
-
-**Stack**: Node.js, Express, Vanilla JS, CSS  
-**Run**: `node server.js` → `http://localhost:3000`  
-**Data**: localStorage (keys: `artpractice_decks`, `artpractice_cards`)
+> **Current State Documentation**  
+> This document tracks the verified architecture, file structure, security model, API contracts, and spaced repetition (SRS) algorithms of Art Practice Studio.
 
 ---
 
-## File Structure
+## 1. Project Overview
+
+Art Practice Reference Studio is a local-first desktop and web application designed for fine art reference study, observational measurement, gesture drilling, and spaced repetition recall (Anki-style SM-2 variant).
+
+- **Runtime Environments**:
+  - **Desktop (Primary)**: Electron (supported stable major v43+) with native Always-on-Top floating mode, click-through Ghost Mode, system tray failsafes, and native folder picker dialogs.
+  - **Browser (Secondary)**: Node.js + Express backend serving standard browsers, with fallback Picture-in-Picture via W3C Document PiP (Chromium) and Video Canvas Streamer (Safari).
+- **Persistence**: Single source of truth is disk-backed atomic JSON storage at `userdata/srs_state.json` with rolling backups (`.bak1`..`.bak5`) and daily snapshots. Browser `localStorage` is used solely as an offline fallback mirror and read cache.
+- **UI & Aesthetics**: Strict Munsell-neutral dark studio palette (`#121212` background, `#1A1A1A` surfaces, `#D97706` warm amber accents) ensuring zero visual color contamination. Designed for 0.0% idle GPU and CPU footprint alongside heavy creative applications (Photoshop, Blender, ZBrush).
+
+---
+
+## 2. Removed Features (Deliberate Removals)
+
+The following legacy features were intentionally stripped from the codebase:
+
+1. **Floating Soap Bubbles & Jelly Physics**:
+   - *Removed*: Background particle canvas, soft elastic volume-preserving squash/stretch jelly physics, bubble-to-bubble collision simulation, and cursor shockwave physics.
+   - *Reason*: Continuous animation loops and canvas repaints consumed 40–80% GPU/CPU, draining laptop batteries and causing frame drops in digital drawing apps.
+2. **Drifting Ambient Aura Orbs & Continuous Keyframe CSS**:
+   - *Removed*: Multi-layer blurred gradient orbs, infinite CSS animations (`todayCellPulse`, `flameFlicker`, `imageShimmer`, `progressSweep`).
+   - *Reason*: Caused continuous WindowServer and GPU compositor redraw loops at idle.
+3. **Fluid Drag Wake Ripples & Fluid Sounds**:
+   - *Removed*: Liquid droplet cursor trail, fluid micro-wake eddies, and resonant water droplet sounds.
+   - *Reason*: Distracting visual clutter and unnecessary audio processing; replaced with snappy, synthesized Web Audio tactile clicks and tones.
+4. **localStorage as Source of Truth**:
+   - *Removed*: Primary reliance on browser `localStorage` for decks, card scheduling, and review history.
+   - *Reason*: Subject to 5MB browser storage limits, browser cache clearing, and cross-port data isolation issues. Replaced by direct disk synchronization (`userdata/srs_state.json`).
+5. **Legacy Ease Formula Drift & Incorrect Fixed Points**:
+   - *Removed*: The flawed formula `E + 0.1 + 0.05 * (2.3 - E)` which drifted toward an unintended fixed point of `4.30`.
+   - *Reason*: Replaced by a true mathematical mean-reversion algorithm converging cleanly to `2.30` with a strict floor of `1.50` and ceiling of `3.00`.
+6. **Legacy Wallpaper Local-Path Input & URL Box**:
+   - *Removed*: Arbitrary filesystem paths and remote HTTP image URLs in the wallpaper modal.
+   - *Reason*: Arbitrary local paths bypassed file boundary security via `/api/image?path=`, and remote HTTP URLs violated strict Content Security Policy (`img-src 'self' data: blob:`). Only local drag-and-drop, file picker, and clipboard paste (persisted via IndexedDB) are supported.
+7. **HTTP Endpoint `/api/electron-float`**:
+   - *Removed*: Unauthenticated HTTP endpoint previously used to trigger floating mode.
+   - *Reason*: Replaced entirely by authenticated Electron IPC channels (`toggle-float-mode`, `set-always-on-top`).
+8. **Invasive Global OS Shortcuts**:
+   - *Removed*: Global system-wide registration of `Shift+[`, `Shift+]`, `Shift+Up`, `Shift+Down`, and `Shift+O`.
+   - *Reason*: Hijacked key combinations across other active applications. Only `CmdOrCtrl+Shift+G` remains registered as a global shortcut.
+9. **Inline Scripts & Inline Event Handlers**:
+   - *Removed*: All inline `<script>` blocks and inline DOM event attributes (`onclick`, `onload`, `onerror`).
+   - *Reason*: Mandatory compliance with strict Content Security Policy (`script-src 'self'`).
+
+---
+
+## 3. Real File Structure
 
 ```
 practiceWeb/
-├── server.js              — Express server: serves static files + API endpoints
-│                            • GET /api/browse?path=   — lists subdirectories at path
-│                            • GET /api/images?folder= — recursively scans folder for images
-│                            • GET /api/deck-meta?folder= — total image count + 3 random covers (60s cache)
-│                            • GET /api/image?path=    — serves a single image file
-├── package.json           — dependencies (express only)
+├── electron-main.js           — Electron main process: window lifecycle, WeakMap window state,
+│                                native menus, tray icon, 60s auto-restore failsafe,
+│                                legacy repo userdata migration, and IPC security checks.
+├── preload.js                 — Main window preload: exposes validated `window.electronAPI`.
+├── child-preload.js           — Child / PiP window preload: exposes minimal unprivileged flags.
+├── server.js                  — Express backend: security middleware, image indexing, disk sync,
+│                                backup rotation, sketch upload, and Clipper with SSRF defense.
+├── package.json               — Project metadata, scripts (`npm test`, `npm run electron`),
+│                                dependencies (`express`), and devDependencies (`electron`, `electron-builder`).
 ├── public/
-│   ├── index.html         — SPA with 3 views (deck list, deck detail, session) + 3 modals
-│   ├── style.css          — dark theme, functional layout
-│   └── app.js             — all frontend logic, organized into modules:
-│                            • Storage      — localStorage read/write
-│                            • DeckManager  — CRUD for decks
-│                            • CardManager  — SRS scheduling (Anki-style intervals)
-│                            • TimerManager — countdown timer with audio beep
-│                            • SessionManager — study/review session queue logic
-│                            • UI           — view rendering, events, folder browser
-└── PROJECT_MEMORY.md      — this file
+│   ├── index.html             — Single Page Application markup (zero inline scripts or handlers).
+│   ├── env-detect.js          — External synchronous desktop/OS detection script.
+│   ├── style.css              — Munsell-neutral atelier theme, layouts, and tool styling.
+│   └── app.js                 — Frontend client modules:
+│                                • Storage        — Disk sync coordinator & IndexedDB wallpaper store
+│                                • DeckManager    — Deck creation, editing, and deletion
+│                                • CardManager    — SRS scheduling, priority sorting, backlog reflow
+│                                • ReviewHistory  — Daily practice logging & streak computation
+│                                • TimerManager   — Practice timer & audio alerts
+│                                • SessionManager — Active queue ordering & image loading
+│                                • ArtistToolbox  — Observational filters (Grayscale, Notan, etc.)
+│                                • SmartCropManager — Focal crop card creation & auto-framing
+│                                • PlumbTool      — Observational angle & alignment measurement
+│                                • SketchOverlay  — Onion-skin self-critique overlay & alignment
+│                                • SoundFX        — Synthesized Web Audio feedback
+│                                • UI             — View rendering, event routing, modals
+├── assets/                    — 53 dark atelier studio vector SVG icons, plus Flame.svg and due.svg.
+├── userdata/                  — Persistent application data (git-ignored, OS-specific path):
+│   ├── srs_state.json         — Primary SRS database (decks, cards, history, wallpaper settings)
+│   ├── srs_state.json.bak1..5 — Rolling backups (shifted on write, throttled to 10 min)
+│   ├── srs_state.json.pre-migration — Pre-migration backup created if empty state was replaced
+│   ├── backups/               — Daily snapshots (`srs_state_YYYY-MM-DD.json`, 7-day retention)
+│   └── sketches/              — Saved PNG/JPEG/WebP user sketch attempts (`sk_<randomHex>.<ext>`)
+└── tests/                     — Automated Node.js test runner suite (`node --test`):
+    ├── api-security.test.js          — Origin gate, Host header, and IPC security tests
+    ├── app-fixes.test.js             — Keyboard filtering, PiP legend, and child card scheduling
+    ├── csp-escaping.test.js          — HTML escaping, CSP headers, and sketchUrl validation
+    ├── deck-folder-security.test.js  — Folder trust, path traversal, and endpoint isolation
+    ├── image-security.test.js        — /api/image media type rejection and SSRF tests
+    ├── local-date.test.js            — Timezone consistency and local calendar date handling
+    ├── migration-replaceable.test.js — Empty state replacement & pre-migration backups
+    ├── srs-algorithm.test.js         — SM-2 intervals, mean reversion, and timer weighting
+    ├── storage-safety.test.js        — Disk sync error handling, banner, and quit flushing
+    ├── sync-backups.test.js          — Atomic writes, backup rotation, and crash recovery
+    └── window-state.test.js          — WeakMap window states, ghost failsafes, and Linux fallback
 ```
 
 ---
 
-## Current Features (Implemented)
+## 4. Actual API Routes
 
-- [x] **Deck system**: create/edit/delete decks, each with a name + folder path
-- [x] **Folder browser**: navigate filesystem visually to choose a folder (Browse button)
-- [x] **Image display**: loads images from folder recursively, shows randomly
-- [x] **Study mode**: random images from full deck (loops infinitely)
-- [x] **Review mode**: only shows images due today (SRS schedule)
-- [x] **Timer**: configurable countdown (30s/1m/2m/5m/10m/custom), pause/resume
-- [x] **Timer blur**: when timer ends, image gets blurred — must rate to proceed
-- [x] **Difficulty rating**: Hard/Medium/Easy with dynamic interval preview
-- [x] **Spaced repetition**: Anki-style interval scheduling
-- [x] **Review history heatmap**: GitHub-style calendar heatmap per deck
-- [x] **Activity stats**: daily average, days learned %, longest streak, current streak
-- [x] **Today's Reviewed button**: shows list of cards reviewed today with difficulty + next review date
-- [x] **Daily Limits (Anki-style)**: configure Max New Cards/Day and Max Reviews/Day per deck
-- [x] **Content-Hash Card IDs (File-Move Resilience)**: Cards keyed by fast SHA-1 content hash (`file size + first 64KB`) so SRS intervals, ease factors, and sub-deck tags follow the image even when renamed, reorganized, or moved between subfolders.
-- [x] **Onion-Skin Sketch Overlay (Self-Critique Tool)**: Paste (<kbd>Cmd+V</kbd>) or drag-and-drop finished sketches directly onto the reference with live Opacity Slider, Difference Blend Mode (`mix-blend-mode: difference`), Normal, and Multiply modes, plus <kbd>K</kbd> flicker test for pinpoint eye accuracy.
-- [x] **Sketch Comparison & Visual History**: Side-by-side comparison of your sketch directly next to the unblurred reference on the rating screen (<kbd>Cmd+V</kbd> or drag-and-drop). Automatically saves sketches to `userdata/sketches/` on rating, building a visual history of past attempts on future review days (<kbd>Y</kbd>) to turn subjective ratings into concrete progress tracking.
-- [x] **Zero-Load GPU & Battery Optimization**: Eliminated continuous CSS repaint loops (`todayCellPulse`, `flameFlicker`, `imageShimmer`, `timerBarShimmer`, `floatBounce`, `progressSweep`) that pinned Firefox GPU Helper at 83.3% GPU and WindowServer at 46.9% CPU. Replaced infinite pulsing on heatmap today cell with a static outline (`outline: 2px solid var(--accent)`), removed full-screen redundant blur on `.wallpaper-overlay` and stripped `will-change: transform, filter, opacity` from `.wallpaper-bg`, removed heavy `backdrop-filter: blur(...)` across 30+ UI elements, and throttled 3D card tilt to `requestAnimationFrame` with cached bounding rects. Idle GPU and CPU redraw drops to 0.0%.
-- [x] **Safe Git baseline**: original code committed safely to git
-- [x] **Munsell-Neutral Studio Palette & Pro Micro-UI Refresh**: Replaced generic "AI dashboard" neon/purple glassmorphic color palette and bubbly 14px-20px rounded corners with a strict Munsell-neutral studio palette (inspired by PureRef, Blender, and DaVinci Resolve) so background colors never contaminate the artist's color and value perception:
-  • Canvas/Stage background: `#121212` (dead-neutral dark charcoal, zero blue/purple tint).
-  • Surfaces: `#1a1a1a` panel surface, `#242424` elevated card surface, `#2e2e2e` hover, hairline `#303030` borders.
-  • Primary Accent: `#d97706` (Warm Atelier Amber) and `#f59e0b` hover.
-  • Tightened Radii: `3px` / `4px` for buttons, inputs, tags, and `6px` for cards, modals, and docks.
-  • Typography: `'JetBrains Mono', 'SF Mono', monospace` with tabular numbers (`tnum`) for all stats, countdowns, intervals, and hotkeys.
-  • Rating Buttons: uniform matte `#242424` with 1px border and semantic accents (`#ef4444` Again, `#f97316` Hard, `#10b981` Good, `#3b82f6` Easy) applied strictly to the 2px bottom border and keybind badge.
-  • Study Auto-Dimming: custom wallpapers automatically dim to `background: rgba(18, 18, 18, 0.96)` and `opacity: 0.12` during active sessions (`#view-session.active`, `body.in-session`, `body.zen-active`) preventing visual color skew.
-  • Maintained 3D mouse card tilting (`applyCardTilt`) and scaled down UI icons for a clean, distraction-free aesthetic.
-- [x] **Core Philosophy**: documented in memory.md and PROJECT_MEMORY.md
+All `/api/*` routes are served by `server.js` and protected by origin-gate security middleware.
+
+| Route | Method | Description | Error Codes |
+|---|---|---|---|
+| `/api/browse` | `GET` | Lists subdirectories and image count at `?path=`. **Disabled in Electron runtime** (`process.env.APP_RUNTIME === 'electron'`). | `400` (not dir), `403` (unreadable), `404` (in Electron or missing) |
+| `/api/images` | `GET` | Recursively indexes images in `?folder=`. Generates content hashes (`ch_<sha1>`). | `400` (missing folder), `403` (outside trust in Electron), `404` (not found) |
+| `/api/deck-meta` | `GET` | Returns total image count and up to 3 random cover paths/hashes for `?folder=`. Cached for 60s. | `400` (missing folder), `403` (outside trust in Electron), `404` (not found) |
+| `/api/image` | `GET` | Serves an image file by `?path=<abs>` or `?hash=<ch_...>`. Validates extension (`.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`, `.bmp`, `.tif`, `.tiff`, `.svg`). In Electron, path must reside within a registered deck folder or `USERDATA_DIR`. Sends `nosniff` and `sandbox; default-src 'none'`. Hashes cached for 24h (`Cache-Control: public, max-age=86400`). | `400` (missing param), `403` (unauthorized folder in Electron), `404` (missing file), `415` (unsupported extension) |
+| `/api/sync` | `POST` | Atomically writes SRS database to `userdata/srs_state.json`. Validates sketch URLs (rejects `javascript:` with 400). Prevents accidental wipe (returns 409 if 0 decks & 0 cards overwrite existing data without `confirmReplace: true`). Shifts `.bak1`..`.bak5` (throttled to 10m) and writes daily snapshots to `userdata/backups/`. | `400` (malformed JSON / disallowed scheme), `409` (accidental wipe conflict), `500` (write failure) |
+| `/api/sync` | `GET` | Reads `srs_state.json`. If primary is missing or invalid JSON, automatically falls back through `.bak1`..`.bak5`, legacy `.bak`, and daily snapshots newest-to-oldest. | `500` (fatal read failure) |
+| `/api/sketch` | `POST` | Saves base64 critique sketch. Rejects payloads > 15MB decoded. Validates magic bytes for PNG, JPEG, or WebP. Saves to `userdata/sketches/sk_<8byteHex>.<ext>`. | `400` (missing dataUrl), `413` (>15MB), `415` (invalid magic bytes), `500` (write failure) |
+| `/api/sketch/:filename` | `GET` | Serves saved sketch from `userdata/sketches/`. Enforces `path.basename()` sanitization to block path traversal. | `404` (not found), `500` (read error) |
+| `/api/sketch` | `GET` | Legacy fallback endpoint (`?file=<name>`); sanitizes filename with `path.basename()`. | `400` (missing file), `404` (not found) |
+| `/api/sketch-history` | `POST` | Records historical attempt entries for a card. | `400` (missing fields), `500` (write failure) |
+| `/api/download-url` | `POST` | Downloads web image or resolves Pinterest pin URL to highest resolution (`originals`) and saves into `folderPath`. In Electron, `folderPath` must be a registered deck folder. Enforces strict SSRF protections. | `400` (SSRF violation / bad URL), `403` (unauthorized deck folder in Electron), `404` (folder not found), `504` (gateway timeout) |
 
 ---
 
-## Completed Upgrades: Living Atmosphere, Custom Wallpaper System & Artist QoL
-- [x] **Philosophy Alignment**: artist flow state, visual immersion, zero-friction shortcuts
-- [x] **Living Atmosphere & Rich Aesthetics**:
-  - Ethereal, lite, and transparent soap bubbles (11-30px) with delicate iridescent rims and curved specular glints
-  - Bouncy & soft elastic jelly physics: bubbles squish into volume-preserving ellipses upon cursor approach, collisions, or shockwaves, bouncing and wobbling softly back into shape
-  - Soft bubble-to-bubble elastic collision & bouncing
-  - Fluid cursor mechanics: aerodynamic liquid droplet following the mouse with viscous fluid drag, plus expanding fluid micro-wake ripples (eddies) shed as the cursor travels through water
-  - Radial physical shockwaves that displace and softly deform bubbles on click
-  - Highlighting click bursts with 4-point rotating diamond sparkle stars (`✦`) and fluid droplet trails
-  - Tactile fluid ripple animation (`.fluid-ripple`) on buttons, cards, and interactive controls
-  - Robust Web Audio API fluid click sound: resonant water droplet bloop + crystal glass ping + warm tactile sub-body with async AudioContext unlocking and global background click playback
-  - Silky fluid water droplet hover sound for buttons, cards, and toolbars
-  - Multi-layer drifting ambient aura orbs with soft radial gradients
-  - Glowing glassmorphic cards with 3D tilt & dynamic specular mouse glare
-  - Synthesized Web Audio API tactile feedback (clicks, hovers, rating chords, timer warnings, singing bowl chime, celebration fanfare)
-  - Living breathing streak flame (`🔥`) and danger/warning timer pulse
-  - Smooth view transitions and staggered animations
-  - Toast HUD notifications for all hotkey actions
-- [x] **User-Custom Background Wallpaper System**:
-  - Set personal wallpaper from local machine (file picker or drag-and-drop) or image URL
-  - Real-time live blur slider (0px - 30px) and dark overlay dimming slider (10% - 90%)
-  - Persistent in IndexedDB (zero image file size limits)
-  - Reset to default dark studio slate option
-- [x] **Artist Quality of Life (QoL)**:
-  - Grayscale / Value Check mode (`G`)
-  - Notan 2-Value Harmonic Study mode (`N`)
-  - Silhouette Mode (`L` / `H`): thresholding subject against background to test gesture clarity, line of action, and negative space with dynamic threshold slider (5–95%) and dark/light silhouette inversion
-  - Posterize Mode (`P`): quantizes tonal values into 3 to 4 classical tonal steps (Light, Halftone, Core Shadow, Occlusion) via hardware-accelerated SVG `feComponentTransfer` discrete filters with slider (2–6 steps), quick 3/4-step presets, and live tonal chips
-  - Proportion grid overlay (`O`)
-  - Smooth drag-to-pan & mouse-wheel zoom
-  - Invert color mode (`I`)
-  - Horizontal flip / mirror (`M`)
-  - 90° image rotation (`R`)
-  - Vertical side toolbar dock: moves artist controls into the empty side space vertically with grouped dividers and compact zoom row, preventing tools from overlapping the top of reference artwork
-  - Always-on-Top Floating PiP Mode (`V`):
-    • Chromium (Chrome, Edge, Arc, Brave): Uses W3C Document Picture-in-Picture API (`window.documentPictureInPicture`) for native OS floating window (`NSFloatingWindowLevel`) containing interactive HTML controls, vertical toolbar, and rating buttons.
-    • Safari & macOS: Apple Safari does not support Document PiP and normal popup windows are sent behind other apps on macOS. Solved via Native macOS Video Picture-in-Picture (`PiPCanvasStreamer`) streaming offscreen canvas to `<video>.requestPictureInPicture()`. macOS WindowServer locks this native PiP window permanently on top of all desktop apps (Photoshop, Blender, VS Code) without getting hidden. Includes live timer countdown, full pixel manipulation filters (Grayscale, Notan, Silhouette, Posterize, Invert), MediaSession controls (`nexttrack` / `play` / `pause`), and 1-click switcher to detachable popup mode.
-    • Transparent DOM lookup proxy (`PiPState`): intercepts `getElementById`, `querySelector`, and `querySelectorAll` to resolve inside floating PiP window when detached.
-    • Responsive floating dock: auto-dims to 0.22 opacity when idle, absolute overlay consuming 0px stage height, smoothly collapses down to circular badges for ultra-compact narrow viewports.
-  - Bubble Toggle & Zero-GPU Eco Mode (`B` / header buttons):
-    • Instantly disables particle canvas, stops all animation loops / timers, clears context, pauses background aura CSS animations, and drops GPU/CPU utilization to 0.0% (ideal for high-load drawing in Photoshop, Blender, or 3D sculpting). Persists in `localStorage`.
-  - Frame Rate Limiter (FPS Limiter):
-    • Multi-tier frame rate throttling: 30 FPS (Eco Mode • ultra-low GPU), 60 FPS (Balanced Smooth default), 120 FPS (High Refresh), and 144 FPS (Max).
-    • Uses precision timestamp delta throttling within `requestAnimationFrame` instead of battery-draining `setInterval` loops. Persists in `localStorage`.
-  - Distraction-free zen fullscreen (`F`)
-  - Keyboard shortcuts cheat sheet modal (`?`)
-  - Session complete celebration & summary modal
-  - Backup & restore (Export/Import JSON)
+## 5. Security Model
+
+### 5.1 Origin Gate & Host Header Middleware
+Every request under `/api/` passes through strict origin verification:
+- **Host Header**: Must strictly match `127.0.0.1:<port>` or `localhost:<port>`. Rejects DNS rebinding and cross-site host headers with `403`.
+- **Cross-Site Navigation**: Rejects any request carrying `Sec-Fetch-Site: cross-site` with `403`.
+- **Opaque Origins**: Rejects `Origin: null` with `403`.
+- **State-Changing Methods (`POST`, `PUT`, `PATCH`, `DELETE`)**: Permitted only when `Origin` is absent (same-origin standard browser action) or exactly matches `http://127.0.0.1:<port>` / `http://localhost:<port>`, and `Sec-Fetch-Site` is `same-origin` or `none`.
+
+### 5.2 File Boundaries & Deck Folder Trust
+- In Electron runtime (`APP_RUNTIME === 'electron'`), `/api/image` and `/api/download-url` refuse access to arbitrary filesystem paths.
+- Paths are canonicalized via `fs.realpathSync()`. The target file must reside within:
+  1. A registered deck folder path defined in `userdata/srs_state.json`, or
+  2. The application's `USERDATA_DIR`, or
+  3. A directory explicitly picked by the user via the native folder picker during the current session (`trustedFolders` Set).
+- Access outside these boundaries is immediately rejected with `403 Forbidden`.
+
+### 5.3 Content Security Policy (CSP) & Sandboxing
+- **App HTML (`/` and `*.html`)**:
+  ```http
+  Content-Security-Policy: default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'
+  ```
+  Completely forbids loading remote external scripts, framing the application, or injecting third-party connect/websocket targets.
+- **Image Serving (`/api/image`)**:
+  ```http
+  X-Content-Type-Options: nosniff
+  Content-Security-Policy: sandbox; default-src 'none'
+  ```
+  Prevents MIME-sniffing attacks and isolates SVG references in a restricted sandbox without script execution rights.
+
+### 5.4 Electron IPC Sender Verification & Sandbox
+- Sensitive IPC channels (`dialog:pick-directory`, `toggle-float-mode`, `set-always-on-top`, `toggle-ghost-mode`, `set-ignore-mouse-events`) execute `isTrustedIpcSender(event, serverPort)`.
+- Verifies that the sender frame's URL matches `http://127.0.0.1:<port>` or `http://localhost:<port>`.
+- Directory picking (`dialog:pick-directory`) is strictly restricted to the primary `mainWindow`; child or popup windows attempting to trigger it receive `canceled: true, error: 'Directory picking only permitted from main window'`.
+- `child-preload.js` exposes only `{ isElectron: true, isChildWindow: true }`, completely stripping window mutation and filesystem capabilities from child windows.
+- Process sandboxing (`sandbox: true`, `contextIsolation: true`, `nodeIntegration: false`) is enforced across all windows.
+
+### 5.5 SSRF & Outbound Clipper Defenses
+- Outbound requests in `/api/download-url` are restricted strictly to ports `80` and `443`.
+- URLs with embedded credentials (`user:pass@host`) are blocked.
+- Hostnames are resolved upfront via DNS and verified against private, loopback, and link-local IP ranges (IPv4 `127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`; IPv6 `::1`, `fc00::/7`, `fe80::/10`).
+- Socket-level DNS lookup validation (`createSafeLookup`) is attached to HTTP client agents to prevent DNS rebinding (Time-of-Check to Time-of-Use) attacks.
+- Outbound `Referer` headers are stripped unless the destination hostname is `pinimg.com` or `*.pinimg.com`.
+- Maximum response size is strictly capped at 25MB for images and 2MB for HTML pages.
+
+### 5.6 HTML Attribute Sanitization
+- All dynamic data rendered into template literals (file names, tags, paths, titles) is sanitized through `UI._esc()` (`_escapeHtml()`):
+  ```javascript
+  str.replace(/&/g, '&amp;')
+     .replace(/</g, '&lt;')
+     .replace(/>/g, '&gt;')
+     
+     .replace(/"/g, '&quot;')
+     .replace(/'/g, '&#39;');
+  ```
 
 ---
 
-## Visual Refresh & Session Fixes (2026-10-07)
-- [x] **True fullscreen** (`F` / header button / HUD ⛶): `UI.setZenMode()` adds `body.zen-active` and requests native fullscreen on `<html>`. `fullscreenchange` keeps state in sync when the browser handles Esc. Reference fills the screen; header, toolbar and rating dock auto-hide after ~2.4s of idle (`body.hud-idle`) and stay up while a rating is required (`body.rating-required`).
-- [x] **Proportion grid fixed**: overlay is an SVG *inside* `#image-frame`, so it sits exactly on the picture and follows zoom/pan/flip/rotate. `O` cycles 3×3 → 4×4 → 8×8 → axes+diagonals → off (`ArtistToolbox.GRID_MODES`).
-- [x] **Image fitting**: `ArtistToolbox.fitImage()` sizes the frame to "contain" in the stage (aware of 90° rotation) on load, resize (ResizeObserver) and rotate. Zoom is cursor-anchored, pan is clamped, double-click toggles 2.5×/fit, rotation never spins backwards (`rotateTotal`).
-- [x] **Session layout**: `#view-session` is a viewport-height flex column; stage takes all remaining space, rating dock is a single row.
-- [x] **Home screen**: daily overview strip (due / practiced / streak / decks), deck cards with cover mosaic + study-progress bar, glass tool dock.
-- Gotcha: `.view.active` animation must end with `transform: none` — a leftover `translateY(0)` traps `position: fixed` children (broke fullscreen overlays).
-- Gotcha: avoid `will-change: transform` on the image frame — Chrome keeps the old raster scale and zoomed detail turns blurry.
-- Gotcha: PiP cross-window DOM resolution requires a standalone `PiPState` proxy and direct delegated capture event listeners on `pipDoc`, as `const UI` does not attach to `window` and browsers drop/isolate cross-realm node listeners when adopted across windows.
-- Gotcha: `#session-workspace` must be properly closed before `#session-pip-placeholder` in `index.html` so the placeholder card stays in the main tab and is not appended into the floating PiP window.
-- Gotcha: Global `@media (max-width: 600px)` rules (`.btn-rate { width: 100% }`) must be scoped with `body:not(.pip-mode)` so floating windows do not inflate button widths when shrunk.
-- Server restart required after pulling these changes (`/api/deck-meta` is new).
+## 6. Spaced Repetition (SRS) Algorithm & Formulas
+
+The spaced repetition system is an SM-2 variant featuring discrete mathematical mean reversion, timer-weighted gesture scaling, and strict ease factor bounds.
+
+Implemented in `CardManager.rateCard(deckId, imageId, imageName, difficulty, studyDuration)`:
+
+### 6.1 Core Rating Formulas
+
+#### A. Again (`again`) [<kbd>1</kbd>]
+- **Interval**: `interval = 0` (card remains due today for immediate re-study).
+- **Lapses**: `lapses = prevLapses + 1`.
+- **Consecutive Successes**: `consecutiveSuccesses = 0`.
+- **Ease Factor**: Penalized by `0.20`:
+  $$\text{easeFactor} = \max\left(1.50, \min\left(3.00, \text{round}(\text{prevEase} - 0.20)\right)\right)$$
+- **Due Date**: Set to today's local date string (`localDateStr()`).
+
+#### B. Hard (`hard`) [<kbd>2</kbd>]
+- **New Card**:
+  - `interval = 1`
+  - `easeFactor = 1.50`
+  - `consecutiveSuccesses = 0`
+- **Review Card**:
+  - **Interval**: Halves previous interval (capped at minimum 1 day):
+    $$\text{interval} = \max\left(1, \text{round}(\text{prevInterval} \times 0.5)\right)$$
+  - **Ease Factor**: Penalized by `0.15`:
+    $$\text{easeFactor} = \max\left(1.50, \min\left(3.00, \text{round}(\text{prevEase} - 0.15)\right)\right)$$
+  - `consecutiveSuccesses = 0`
+
+#### C. Good / Medium (`medium`) [<kbd>3</kbd>]
+- **New Card**:
+  - `interval = 3`
+  - `easeFactor = 1.80`
+  - `consecutiveSuccesses = 1`
+- **Review Card**:
+  - **Interval**: Scaled by previous ease factor:
+    $$\text{interval} = \max\left(\text{prevInterval} + 1, \text{round}(\text{prevInterval} \times \text{prevEase})\right)$$
+  - **Ease Factor Mean Reversion**:
+    When `prevConsecutive >= 1`, ease factor undergoes soft discrete mean-reversion toward baseline `2.30`:
+    $$\text{diff} = 2.30 - \text{prevEase}$$
+    $$\text{step} = \text{round}(0.10 \times \text{diff})$$
+    If $|\text{diff}| < 0.005$, $\text{easeFactor} = 2.30$. If $\text{step} = 0$, adjusts by $\pm 0.01$.
+    Bounded within $[1.50, 3.00]$.
+  - `consecutiveSuccesses = prevConsecutive + 1`
+
+#### D. Easy (`easy`) [<kbd>4</kbd>]
+- **New Card**:
+  - Standard `interval = 7`.
+  - **Timer-Weighted Gesture Scaling**: If $\text{studyDuration} \le 45\text{s}$, interval is capped to $\min(\text{interval}, 4) = 4\text{ days}$.
+  - `easeFactor = 2.00`
+  - `consecutiveSuccesses = 1`
+- **Review Card**:
+  - **Interval**:
+    $$\text{interval} = \max\left(\text{prevInterval} + 2, \text{round}(\text{prevInterval} \times \text{prevEase} \times 1.3)\right)$$
+  - **Timer-Weighted Gesture Scaling**: If $\text{prevReviews} < 2$ and $\text{studyDuration} \le 45\text{s}$, interval is capped to $\min(\text{interval}, 4)$.
+  - **Ease Factor**: Boosted by `+0.10`:
+    $$\text{easeFactor} = \max\left(1.50, \min\left(3.00, \text{prevEase} + 0.10\right)\right)$$
+  - `consecutiveSuccesses = prevConsecutive + 1`
+
+### 6.2 Strict Ease Bounds
+- **Floor**: `1.50` (prevents permanent SM-2 "Ease Hell").
+- **Ceiling**: `3.00`.
+- **Target Equilibrium**: `2.30`.
+
+### 6.3 Local Calendar Date Handling
+- Date strings are generated via `localDateStr(date)` (`YYYY-MM-DD` in the user's local system timezone).
+- Eliminates UTC midnight boundary shifts where reviews late at night (e.g. 23:30) landed on the next calendar day in UTC.
+- Existing historical keys and dates are preserved without destructive rewriting.
+
+### 6.4 Priority Scoring & Overdue Backlog Reflow
+- **Dynamic Priority**: Overdue cards are ordered in review sessions by urgency:
+  $$\text{priority} = (\text{lapses} \times 15) + \text{difficultyWeight} + ((2.5 - \text{ease}) \times 10) + (\text{overdueDays} \times 2)$$
+  Highest-priority cards (leech cards, failed recalls, low ease) are practiced first.
+- **Backlog Reflow**: When an overdue backlog exceeds the configured daily review limit, clicking `#btn-reflow-backlog` keeps the top daily limit cards for today and distributes remaining overdue cards evenly across the next 5 days (`+1` to `+5` days).
 
 ---
 
-## Architecture Notes
+## 7. Desktop Electron Architecture
 
-### 4-Button Grading System & Spaced Repetition (SM-2)
-The spaced repetition uses a full 4-button SM-2 variant matching standard Anki learning steps:
-- **Again (<10m)** [<kbd>1</kbd>]: Immediate reset. Card remains due today (`interval = 0`, `dueDate = todayStr`), ease factor penalized by -0.20, and lapse counter incremented. In active study sessions, the card is automatically re-queued 3–4 cards ahead so the artist can re-test recall before the session ends.
-- **Hard (1 day)** [<kbd>2</kbd>]: Straining recall. Interval drops by 50% or advances by 1 day (`easeFactor -= 0.15`).
-- **Good / Medium** [<kbd>3</kbd>]: Successful recall. Interval advances by $prevInterval \times prevEase$.
-- **Easy (7+ days)** [<kbd>4</kbd>]: Effortless recall. Interval leaps forward ($prevInterval \times prevEase \times 1.3$) and ease factor receives a bonus (`+0.15`).
-- Data Model:
-```
-Card: {
-  imageId, imageName, difficulty, interval, easeFactor, dueDate,
-  reviewCount, lapses, lastReviewDate, firstReviewDate,
-  isChild, parentImageId, parentPath, parentHash, crop,
-  tags: ['hands', 'foreshortening', ...],
-  attempts: [{ date, rating, sketchUrl }]
-}
-```
+### 7.1 Independent WeakMap Window States
+- Global state variables were replaced by a `WeakMap<BrowserWindow, Object>` accessed via `getState(win)`.
+- State shape:
+  ```javascript
+  {
+    floating: false,
+    normalBounds: null,
+    alwaysOnTop: false,
+    ghost: false,
+    originalOpacity: 1.0,
+    ghostOpacity: 0.40,
+    ghostTimer: null,
+    keepGhost: false
+  }
+  ```
+- Automatically cleaned up on window `'closed'`.
+- Child windows maintain independent bounds and state without altering `mainWindow`. Application menu checkboxes reflect `mainWindow` state only.
+- Toggling float mode does not clear independent always-on-top state.
 
-### 3-Value & Dynamic Posterization (Watts Atelier Value Studies)
-- **SVG `<filter id="filter-posterize-3">`**: Hardware-accelerated discrete tonal mapping using `<feComponentTransfer in="grey">` with `<feFuncR|G|B type="discrete" tableValues="0 0.5 1"/>` dropping clean 3-value breakdowns (Light, Halftone, Shadow).
-- **Dynamic `<filter id="filter-posterize">`**: Dynamic 2–6 step discrete filter responding to live slider, default initialized to 3 steps with instant presets for classical atelier studies.
+### 7.2 Ghost Mode & Failsafes
+- Activated via <kbd>CmdOrCtrl+Shift+G</kbd> or the window menu.
+- Sets opacity to `0.40` and enables mouse click-through via `win.setIgnoreMouseEvents(true, { forward: true })`.
+- **60-Second Auto-Restore Timer**: If mouse interaction is ignored in ghost mode, an automatic timer restores normal interaction after 60 seconds unless the user presses <kbd>CmdOrCtrl+Shift+K</kbd> to keep ghost mode active.
+- **System Tray Icon**: Context menu provides a direct "Exit Ghost Mode" action to prevent artists from being locked out of window controls.
+- **Opt-in Blur-Loss Failsafe**: Configurable via the View menu (`Exit Ghost Mode on Focus Loss`) or IPC (`set-restore-ghost-on-blur`). When disabled (default), click-through persists when focusing background apps (Photoshop, Blender); when enabled, losing focus immediately restores mouse interaction and exits Ghost Mode.
 
-### Sub-Deck Tagging & Focus Filters
-- Pressing `T` in active study opens the non-intrusive Quick Tagging Dock.
-- Presets: `1` Hands, `2` Foreshortening, `3` Lighting, `4` Anatomy, `5` Gesture, `6` Leech (or type custom tags with Enter).
-- Pressing `1`–`6` while the dock is open toggles tags instantly without disturbing artist flow.
-- Deck Detail View features `#deck-focus-section` allowing one-click filtering of study/review/free queues to any sub-deck tag without moving files on disk.
-
-### Always-on-Top Floating Mode
-- Uses Document Picture-in-Picture (`window.documentPictureInPicture`) or dual HTML5 Canvas video stream fallback for Safari / WebKit.
-- Includes tactile rating dock, timer bar, zoom/pan/rotate, artist tool filters, and MediaSession global hotkeys.
-
-### Disk-Backed State System (`userdata/srs_state.json`)
-- Replaced fragile 5MB browser `localStorage` quota and port-switching vulnerability with direct atomic disk persistence to `userdata/srs_state.json`.
-- `POST /api/sync`: Express endpoint with 50MB payload capacity; performs atomic write via temporary file rename to prevent file corruption.
-- `GET /api/sync`: Express endpoint returning existing database state on startup.
-- Automatically syncs after every practice session (`UI.endSession()`, `UI.openSessionSummaryModal()`), on ratings/tagging, on deck changes, and on page unload (`visibilitychange` / `beforeunload`).
-- Automatic migration: if `userdata/srs_state.json` does not exist yet, existing browser `localStorage` cards and decks are migrated to disk on startup.
-
-### Content-Hash Card IDs (File-Move Resilience)
-- **Problem**: Keying cards by absolute file path (`/Users/.../pose/img1.png`) meant moving images to subfolders, renaming files, or reorganizing reference folders wiped out review history.
-- **Fast Content Hashing**: `server.js` computes a fast content hash (`ch_` + SHA-1 of `file size + first 64KB`). Benchmarked at ~0.02ms per file, with in-memory caching keyed by `filePath`, `mtimeMs`, and `size`.
-- **API Mapping**:
-  - `GET /api/images` returns `{ id: hash, hash: hash, path: filePath, name: relativePath, folder: ... }`.
-  - `GET /api/image` accepts both `?path=` and `?hash=`, resolving content hashes to disk paths using `hashToPathMap`.
-- **Automatic Migration**: `CardManager.migrateLegacyPathCards(deckId, images)` seamlessly transforms existing path-keyed cards to content hashes upon loading deck details or starting a session. If a file was renamed, its SRS review history and tags are preserved while its display name is updated to the new relative path.
-
-### Onion-Skin Sketch Overlay (Self-Critique Tool)
-- **Problem**: In fast gesture drilling and anatomy recall, training eye accuracy requires immediate, objective feedback comparing the artist's drawn proportions against the reference model photo.
-- **Workflow**:
-  - **Paste (<kbd>Cmd+V</kbd> / <kbd>Ctrl+V</kbd>)**: Artists copy their canvas/layer in Photoshop, Procreate, Clip Studio Paint, or Krita and paste directly onto the stage.
-  - **Drag & Drop**: Drop any sketch file directly over `#image-stage` with visual animated drop zone.
-  - **Time's Up Integration**: When the study timer ends, the blur overlay features a direct "Paste Sketch (<kbd>Cmd+V</kbd>)" action and "Unblur Reference" toggle. Pasting automatically clears/unblurs so the artist can critique before rating.
-  - **Blend Modes**:
-    • `Difference` (`mix-blend-mode: difference`): Exact matches turn dark/black; anatomical discrepancies and proportion shifts highlight brightly in high contrast.
-    • `Normal` (`mix-blend-mode: normal`): Classic semi-transparent onion skinning with 0-100% opacity slider.
-    • `Multiply` (`mix-blend-mode: multiply`): Perfect for sketches on white backgrounds (lines overlay directly over reference photo).
-  - **Flicker Test (<kbd>K</kbd>)**: Rapidly toggles sketch visibility on/off to let the artist's eye catch structural deviations through 2D animation-style persistence of vision.
-  - **Synchronized Transforms & PiP Support**: Overlay sits inside `#image-frame`, automatically following all zoom, pan, rotate, and horizontal flip transforms, and renders in both Document PiP and Safari Canvas Video PiP.
-
-### Sketch Comparison & Visual History
-- **Problem**: Subjective self-ratings (Hard, Medium, Easy) become biased over time without visual records of past attempts.
-- **Workflow**:
-  - Dropping or pasting (<kbd>Cmd+V</kbd>) a sketch attaches it to the current card's attempt history.
-  - On rating, the sketch is archived into `CardManager.cards[deckId][imageId].attempts` with timestamp and rating.
-  - Side-by-side comparison (<kbd>Y</kbd>) displays unblurred reference photo and sketches side-by-side, complete with historical attempt tabs to track growth across study sessions.
-
-### Color & Palette Extraction HUD (<kbd>E</kbd>)
-- **Purpose**: Master studies, lighting drills, and shadow temperature verification.
-- **Dominant Lighting & Shadow Harmony**:
-  - Fast offscreen canvas quantization samples image pixels into 5-bit color buckets and clusters into 6-7 harmonized dominant swatches.
-  - Automatically sorted by perceptual value lightness ($Y = 0.299R + 0.587G + 0.114B$) from highlights to core shadows.
-  - Each chip displays its Munsell-style Value % tag, hex, and Warm/Cool classification.
-- **Live HSB/Value Eyedropper on Hover**:
-  - Exact inverse transform math accounts for zoom, pan, rotation, and horizontal flipping.
-  - Hovering over `#image-stage` displays `#eyedropper-loupe` near cursor with live circular color preview, temperature badge, HEX, and HSB metrics ($H^\circ, S\%, B\%$).
-  - Clicking on the reference saves the sampled color to the Sampled Study Colors bar (up to 12 custom swatches) and copies HEX to clipboard.
-- **Floating Movable & Hideable Controls**:
-  - Free drag-and-drop repositioning across `#session-image-container` via header bar or drag grip with cursor bounds clamping.
-  - Minimize / Collapse button (<kbd>Shift+E</kbd>) collapses swatches & inspector down to a slim 34px floating header bar.
-  - Hide / Close button (`X` or <kbd>E</kbd> or <kbd>Esc</kbd>) closes the window while preserving sampled and dominant swatches.
-
-### Onion-Skin Overlay & Critique Dock (<kbd>K</kbd> / <kbd>Shift+K</kbd>)
-- **Floating Movable Dock**:
-  - Draggable anywhere on the canvas via header bar or drag grip with clamp bounds, preventing it from obscuring the top of references.
-- **Hideable Dock**:
-  - Dedicated Hide Dock button (`X`, <kbd>Shift+K</kbd>, or <kbd>Esc</kbd>) closes the dock panel while keeping the sketch overlay active on the canvas.
-  - Re-open at any time via the sidebar "Overlay" button (`#btn-art-sketch`) or <kbd>Shift+K</kbd>.
-  - Minimize button collapses controls row down to a sleek single row (title, eye flicker test, blend mode switcher, paste, actions).
-  - Explicit Remove / Delete button (trash icon 🗑️) prevents accidental sketch deletion when closing the dock.
-
-### Smart Crop / Focal Point Zoom Cards (<kbd>C</kbd>)
-- **Purpose**: Practice tricky sub-regions (hands, facial features, drapery folds, dramatic lighting) from full-body references without duplicating image files on disk.
-- **Zero-Disk Duplication**:
-  - Pressing <kbd>C</kbd> during active session opens `#smart-crop-overlay`.
-  - Artists drag an interactive selection box over the focal area and choose topic tags (`#hands`, `#face`, `#drapery`, `#lighting`, `#feet`, `#foreshortening`).
-  - Stores normalized bounds `{ x, y, w, h }` (0.0 to 1.0) on child cards referencing parent `imageId`/hash and path.
-- **Independent SRS Schedule**:
-  - Child cards have their own interval, ease factor, repetition count, and due dates.
-  - Included in Study New, Review Due, and Free Study queues, plus Sub-Deck tag filters.
-- **Auto-Framing & Context Toggle (<kbd>Shift+C</kbd>)**:
-  - When reviewing a focal card, `SmartCropManager` auto-zooms and pans directly to the cropped region.
-  - Shows `#session-focal-pill`; pressing <kbd>Shift+C</kbd> flips seamlessly between zoomed focal crop and full reference context.
-
-### Studio Status Bar & Compact Topbar
-- **Compact Studio Status Bar (`40px` Ribbon)**:
-  - Replaced oversized 4-card stat grids on Home view (`#today-strip`) and Deck Detail view (`#deck-stats-row`) with a compact single-row horizontal flex ribbon (`background: #1A1A1A; border: 1px solid #2E2E2E; border-radius: 6px; height: 40px; padding: 0 16px; gap: 24px;`).
-  - Stat items are separated by `1px solid #2E2E2E` vertical dividers.
-  - Numbers and labels sit inline with lightweight vector SVGs: `[SVG] 82 Due Today | [SVG] 0 Practiced | [SVG] 0d Streak | [SVG] 2 Decks`.
-  - Monospace typography with tabular figures (`tnum`) for numeric values.
-  - Sits reference decks and study workspace significantly higher on the screen without unnecessary vertical scrolling.
-- **Compact Topbar (`44px` Height)**:
-  - `.app-header` and `.deck-header` compacted to `44px` height with `padding: 0 16px` and `28px`-tall utility buttons (`Sound`, `Wallpaper`, `Data`, `Hotkeys`, `+ New Deck`).
-
-### Floating PureRef HUD & Side Tool Auto-Hide (Mac Dock Behavior)
-- **macOS Dock-Style Auto-Hiding Side Tools (Both Window & Float Mode)**:
-  - When drawing / studying, `.image-hud-dock` auto-retracts flush against the right edge of the screen (`translateX(calc(100% - 5px))` with `opacity: 0.35`), leaving only a discreet 5px rounded peek handle.
-  - 99% of the reference stage is 100% crystal clear and unobstructed.
-  - Moving the cursor near the right edge (within 50px) or hovering the edge trigger zone smoothly slides the dock out into full view (`translateX(0)` with `cubic-bezier(0.16, 1, 0.3, 1)`).
-  - Moving cursor away smoothly slides the dock back into the edge.
-  - Active subpanels (like `#filter-controls-dock` for Silhouette or Posterize threshold adjustment) automatically keep the dock pinned open while tweaking sliders.
-- **Responsive 2-Column Grid Alignment on Window Shrink**:
-  - When the window height shrinks (height $\le$ 580px, or $\le$ 600px in float mode, or width $\le$ 700px), `.image-toolbar` dynamically changes alignment from a single tall 555px vertical stack into a compact 2-column tactile grid.
-  - Drops total toolbar height from 555px down to ~240px.
-  - The zoom row spans horizontally across both columns (`[－] [100%] [＋]`).
-  - Constrained with `max-height: calc(100vh - 20px); overflow-y: auto;` so tools never vanish or clip under the bottom of the window, even on extreme small viewports.
-- **Float Mode Rating Cleanliness**:
-  - Removed sketch dropzone and Hard/Medium/Easy buttons in float mode; only `Again [1]` and `Skip [S]` remain.
-  - Keys <kbd>2</kbd>, <kbd>3</kbd>, <kbd>4</kbd> are ignored in float mode.
-
-### Onion-Skin Sketch Alignment (Self-Critique Proportional Overlay)
-- **Independent Pan, Scale, and Rotate Alignment (`A`)**:
-  - Artists whose freehand digital sketch isn't drawn at the exact same canvas offset or scale can align landmarks directly over the reference photo before using Difference blend mode or the `K` flicker test.
-  - State tracked inside `SketchOverlay`: `sketchOffsetX`, `sketchOffsetY`, `sketchScale`, `sketchRotate`, `isAlignMode`.
-  - Nested inside `#image-frame` with `transform-origin: center center`, so global zoom/pan/flip moves both reference and sketch together by default.
-  - When Align Mode is active (`A` toggle):
-    - Dragging on `#image-stage` pans ONLY `#sketch-overlay` with 1:1 screen mapping (compensating for global zoom, flip, and reference rotation).
-    - Mouse wheel scrolling scales ONLY `#sketch-overlay` in 1% increments (`0.1×` to `5.0×`).
-    - Holding `Shift + Scroll` (or hotkeys `[` and `]`) rotates ONLY `#sketch-overlay` in `0.5°` steps.
-    - Double-clicking stage or clicking `↺ Reset` resets offset to `0,0`, scale to `1.0`, and rotate to `0°`.
-    - Real-time studio metrics badge displays current offset, scale, and rotation (e.g. `+14,-8px · 104% · 1.5°`).
-    - Stage displays `grab` / `grabbing` cursor during align mode.
-  - Full Safari & Canvas PiP synchronization: `PiPCanvasStreamer.render()` accurately applies `sketchOffsetX/Y`, `sketchRotate`, and `sketchScale` to canvas video stream.
-
-### Studio Distraction Elimination (Notification & HUD Streamlining)
-- **Eliminated In-Session Toast Notifications & Stacking**:
-  - Removed all spammy toast popups during drawing drills and flicker tests (`K` Sketch Visible/Hidden, blend mode changes, fit mode, grayscale/notan/silhouette/posterize filters, horizontal flip, rotation, timer pause/reset, sound toggle, eyedropper/palette sampling, and PiP mode transitions).
-  - Rapid key presses (like pressing <kbd>K</kbd> repeatedly for the flicker test) now toggle layers silently and instantly without spawning stacked columns of toast pills over the reference artwork.
-  - `#toast-container` is strictly disabled during active study sessions, float mode, and zen mode via CSS `display: none !important;` and early returns in `UI.showToast()`.
-  - Outside session view (e.g. deck creation / settings), `container.innerHTML = ''` guarantees only one toast ever exists at a time (zero stacking).
-  - Repositioned `.toast-container` to bottom-center (`bottom: 28px`), preventing collision with top control docks and app headers.
-
-### Floating Reference & macOS Dock Auto-Hide Polish
-- **Float Mode Bottom Bar & Paste Removal**:
-  - Removed Easy, Medium, Hard rating buttons and the sketch paste/drop section (`#rating-sketch-bar`) completely from float mode (`body.pip-mode`).
-  - During active drawing drills, the floating rating dock is 100% invisible (`opacity: 0; pointer-events: none;`) so zero UI covers the artwork. It smoothly fades in only when the artist hovers near the bottom edge or when the timer expires (`rating-required`), presenting a minimal `[ Again ]` and `[ Skip ]` pill.
-- **Side Tool Dock macOS Auto-Hide**:
-  - Both in window mode and float mode, the vertical side tool dock hides completely off-screen (`translateX(calc(100% + 12px)); opacity: 0; pointer-events: none;`).
-  - Approaching the right edge (within 36px) or hovering `.dock-edge-trigger` smoothly slides the dock into view (`translateX(0); opacity: 1; pointer-events: auto;`).
-  - Moving the cursor away from the edge smoothly slides the dock out of sight. Resolved button focus lock by blurring active buttons on pointer exit.
-- **Adaptive Shrunk Window Tool Alignment**:
-  - When the window height or width shrinks (`height <= 720px` or `width <= 720px`), the side toolbar dynamically transitions from a tall vertical single-column strip into an ultra-compact **2-column grid** (`grid-template-columns: repeat(2, 32px)`).
-  - Tools remain fully visible and comfortable to click without vanishing or cropping under the window, backed by slim-scrollbar overflow scrolling.
-
-### Plumb-Line & Angle Measurement Tool (`U` / `Shift+Drag`)
-- **Interactive Anatomical Tilt & Alignment Drops**:
-  - Lets artists measure observational drawing angles (e.g. shoulder vs. pelvis tilt, head angle, limb axes) and vertical/horizontal alignment drop-lines directly against the reference image.
-  - Rendered inside `#image-frame` as an `<svg id="plumb-overlay" class="plumb-overlay">`, automatically tracking all zoom, pan, horizontal mirror flip, and 90° rotations.
-  - Activated by clicking the side toolbar button `#btn-art-plumb`, pressing hotkey <kbd>U</kbd> in session, or holding <kbd>Shift</kbd> and dragging on `#image-frame`. Normal drag-to-pan behavior remains completely unaffected.
-  - **Drop-line Crosshairs**: At `startPoint` and `currentPoint`, renders faint dashed horizontal and vertical crosshairs (`stroke-dasharray="4 4"`) spanning the full height and width of the reference photo.
-  - **Tilt Metric Badge**: Midpoint displays a compact monospace pill badge with the exact angle in degrees (`0.0°` to `90.0°` relative to nearest axis) and relative length (`% of image height`), mathematically counter-rotated and counter-flipped so text remains upright and legible in any orientation.
-  - **Multi-Line Tilt Comparisons**: Retains up to 3 distinct active measurement lines simultaneously using atelier studio palette colors (Amber `#f59e0b`, Sky Cyan `#38bdf8`, Rose Coral `#f43f5e`) to compare multiple axes (e.g. shoulders, ribcage, pelvis).
-  - Pressing <kbd>U</kbd> or clicking `#btn-art-plumb` clears all active lines; pressing <kbd>Esc</kbd> clears lines and exits Measure Mode.
-  - Full Canvas / Video PiP synchronization via `PlumbTool.renderToCanvas()`.
-
-### Spaced Repetition Scheduling Upgrades (CardManager)
-- **Ease Hell Prevention & Strict Mean Reversion**:
-  - Eliminated permanent SM-2 "Ease Hell" trap by enforcing a strict minimum `easeFactor` floor of `1.5` (raised from legacy `1.2` / `1.3`) and a ceiling of `3.0`.
-  - Audited and corrected the ease-factor formula to ensure a strict mathematical fixed point at `2.30`:
-    • Previous buggy formula `E + 0.1 + 0.05 * (2.3 - E)` had an unintended fixed point of `4.30` because the `+0.1` constant shifted the equilibrium.
-    • Corrected to clean discrete mean-reversion without constant drift: `diff = 2.3 - prevEase; step = round(0.10 * diff);` with resolution preservation preventing sub-cent discretization stalls.
-    • Cards flagged difficult smoothly recover toward baseline `2.30` on Good (`medium`) streaks ($1.50 \to 1.58 \to 1.65 \to \dots \to 2.30$) and remain strictly locked at `2.30`.
-    • Easy (`easy`) ratings award a dedicated $+0.10$ multiplier boost capped at `3.00`.
-    • All ease calculations rounded to 2 decimal places (`Math.round(ef * 100) / 100`), eliminating IEEE 754 precision noise (`1.4999999999999998`).
-- **Timer-Weighted Interval Scaling**:
-  - Rapid gesture drills (`<= 45s` timer) on a card's first 2 reviews cap the Easy (`4`) interval jump to a maximum of `4 days` (down from standard 7+ days).
-  - Prevents 30-second quick gesture sketches from pushing anatomically complex or unfamiliar references weeks into the future before a thorough structural or tonal study is performed.
-- **Overdue Backlog Load-Balancer & Priority Sorting**:
-  - **Dynamic Priority Scoring**: Overdue cards are automatically sorted using `CardManager.getCardPriority(card)` which weights:
-    `priority = (lapses * 15) + difficultyWeight + ((2.5 - ease) * 10) + (overdueDays * 2)`
-    Ensures daily review sessions tackle high-lapse leech cards, failed recalls, and difficult references before easy ones.
-  - **Reflow Overdue Backlog Button**: Added `#btn-reflow-backlog` in Deck Detail (`.session-options-bar`). If a user's due queue exceeds their configured daily review limit, clicking this button retains the top daily limit of highest-priority cards for today, and smoothly spreads the excess cards evenly across the next 5 days (`+1` to `+5` days).
-  - 100% backward compatible with existing card structures in `userdata/srs_state.json`.
-
-### Squint Blur Tool (`S` / `[` / `]`)
-- **High-Frequency Detail Stripping for Big Form & Mass Checks**:
-  - Implements an observational squint check using an SVG Gaussian blur filter (`<filter id="filter-squint">`) with `edgeMode="duplicate"`, completely preventing dark background/transparent edge bleed around reference photos.
-  - Allows artists to soften fine surface textures, micro-edges, and high-frequency noise to evaluate dominant silhouette forms, big value masses, and light vs. shadow group relationships without harsh posterization or binarization.
-  - Activated via toolbar button `#btn-art-squint`, hotkey <kbd>S</kbd> in active session (with <kbd>Shift+S</kbd> disambiguated for skip), or in Document and Safari Video PiP floating modes.
-  - **Adjustable Radius Subpanel**: `#panel-squint-controls` slides out in the filter dock with presets (`3px` subtle edge softening, `8px` form mass check, `16px` macro-value silhouette block-in, `↺ 6px` default reset) and a continuous slider (`1px` to `24px`). Hotkeys <kbd>[</kbd> and <kbd>]</kbd> step the blur radius down/up by 1px while squint mode is active.
-  - **Multi-Filter Stacking**: Stacks cleanly with Grayscale, Invert, Silhouette, Posterize, and Notan modes via comprehensive compound CSS rules.
-  - Synchronized across both main window and floating Picture-in-Picture window (Document PiP SVG clone + Safari Video PiP Canvas 2D blur filter).
-
-### Desktop Atelier Selection Controls
-- **Zero Accidental Blue Highlights on UI Chrome**:
-  - `html, body` and all UI chrome (buttons, side tool docks, timer bars, stats ribbon, rating buttons, modals, badges, stage frame, and reference image) are set to `user-select: none !important;` to emulate native creative desktop app behavior (PureRef, Blender, DaVinci Resolve).
-  - Rapid double-clicking, scrubbing sliders, holding Shift+Drag for plumb lines, or dragging to pan references will never trigger unwanted browser text selection highlights.
-- **Copyable Text Zones**:
-  - **Color Palette & Eyedropper HUD**: Swatches, color inspector cards, and eyedropper loupe (`.palette-hud-card`, `.palette-color-inspector`, `.eyedropper-loupe`) remain fully copyable.
-  - **1-Click Select All**: `#inspector-hex`, `.inspector-hex`, `.metric-val` (RGB, lightness, hue, sat, bri), and `#loupe-hex` use `user-select: all !important;` and `cursor: text;` for effortless single-click selection and clipboard copying into Photoshop, Krita, and Blender. Clicking `#inspector-hex` or `#btn-copy-inspector-hex` also triggers a copy with a green "✓ Copied!" feedback state.
-  - **Editable Fields, Paths & Code**: All text inputs (`<input>`, `<textarea>`, `[contenteditable]`), folder paths (`#deck-detail-folder`, `.folder-path`), and `<code>` blocks remain cleanly selectable.
-  - Custom atelier amber `::selection` highlight (`rgba(217, 119, 6, 0.45)`).
-
-### Custom Atelier Flame Vector Streak Icon
-- **Zero-GPU Flame Vectors with Core Glow**:
-  - Replaced the streak flame icon in `#today-strip` (Home status bar) and the Deck Detail heatmap footer (`Current Streak`) with a multi-layered Atelier Flame SVG.
-  - Built with 5 vector layers: Back-left dark wing (`#27272A`), Main central flame tongue (`url(#flame-core-grad)` from `#FEF08A` inner core to `#F59E0B` amber to `#EA580C` orange tip), Middle charcoal fold (`#3F3F46`), Inner pocket glow overlay (`url(#flame-inner-glow)` with `mix-blend-mode: screen`), and Bottom bone-white crescent (`#F4F4F0`).
-  - Styled with `.atelier-flame-icon` (`vertical-align: middle; flex-shrink: 0; filter: drop-shadow(0 0 4px rgba(245, 158, 11, 0.28));`).
-  - Suppressed emoji flame in `.streak-flame` via `display: none !important;` so JS streak updates preserve clean vector styling.
-  - 0.0% continuous GPU usage (zero continuous `@keyframes` animations).
-
-### Atelier Studio Vector Icon System & Zero-Emoji Overhaul
-- **53 Standalone Studio Icons**: Generated and saved in `assets/` and mirrored to `public/assets/`, matching the atelier dark studio theme.
-- **Strict Preservations**: Original `assets/Flame.svg` and `assets/due.svg` remain 100% untouched.
-- **Complete Elimination of System Emojis**: Removed all emojis across `public/index.html`, `public/app.js`, `public/style.css`, and `server.js` (verified 0 emojis across the entire project).
-- **Centralized Vector Generation**: Implemented `UI.getIconSvg(nameOrEmoji, size, className)` and `UI.getFlameSvgHTML(width, height)` in `public/app.js` with automatic legacy emoji fallback mapping.
-- **Styling**: Added `.tonal-dot` (6 tonal swatch classes), `.rating-dot` (easy/medium/hard classes), and studio vector icon classes in `public/style.css`.
-
-### Web & Pinterest Reference Clipper
-- **Direct Web & Pin Import (`POST /api/download-url`)**:
-  - Resolves both direct image URLs and Pinterest URLs (`pinterest.com/pin/...`, `pin.it/...`, `i.pinimg.com`).
-  - Fetches pin HTML with a desktop User-Agent, parses `<meta property="og:image">`, and upgrades thumbnail resolutions (`236x`, `474x`, `564x`, `736x`) to `originals` with automatic fallback.
-  - Downloads binary image buffer, detects file extension (`.jpg`, `.png`, `.webp`), saves directly into the target deck's directory on disk (`pin_${Date.now()}.${ext}`).
-  - Computes `ch_` content hash, registers it in `hashToPathMap`, invalidates folder metadata cache, and returns `{ success: true, image }`.
-- **Deck Detail Clipper Bar (`#web-clipper-bar`)**:
-  - Compact flex row with `#input-clip-url`, `#btn-clip-url` ("＋ Save to Deck"), and live status container `#clip-status-msg`.
-  - Styled with `#1A1A1A` Munsell neutral surface, `1px solid #2E2E2E` hairline border, `4px` radius, and `#D97706` amber focus ring.
-  - Automatically reloads deck images, migrates content-hash cards, updates deck stats, and provides tactile audio feedback (`SoundFX.chirp()`).
-
-### Fast Content-Hashed Image Caching
-- **Browser Cache-Control Header**:
-  - In `GET /api/image`, when an image is requested via content hash (`?hash=`), sets `Cache-Control: public, max-age=86400` (24-hour immutable cache) for lightning-fast reference rendering.
-
-### Sketch Storage Optimization & Startup Migration
-- **Zero-Base64 SRS Database**:
-  - Startup migration helper `migrateBase64SketchesOnStartup()` in `server.js` scans `userdata/srs_state.json` once on boot.
-  - Any legacy inline `data:image/...` strings inside `attempt.sketchUrl` are written to disk as PNGs in `userdata/sketches/` and replaced with lightweight `/api/sketch/<filename>` references, keeping the SRS database compact.
-
-### Clean Folder Path Presentation
-- **Short Path Formatter (`UI.formatShortPath`)**:
-  - Long absolute paths (e.g., `/Users/username/Desktop2/Art/references/pose`) are displayed cleanly as `~/Art/references/pose` across deck cards and headers while retaining the full path in the `title` tooltip.
-
-### Performance & GPU Optimization
-- All background bubbles, continuous particle canvas rendering, ambient aura blur orbs, and click DOM ripples completely removed.
-- Near 0% idle GPU and CPU footprint for seamless background execution alongside heavy creative tools (Photoshop, Blender, ZBrush).
-
-### macOS Window Chrome & Draggable Titlebars
-- **Zero-Overlap Traffic Light Inset**:
-  - `electron-main.js` aligns macOS native window controls at `trafficLightPosition: { x: 16, y: 14 }`, centering them vertically within the 44px topbar.
-  - Headers (`.app-header`, `.deck-header`, `.session-header`) apply `padding-left: 84px !important;` on macOS Electron, providing a clean 16px buffer before the "Art Practice" logo and "← Back to Decks" / "← End Session" buttons.
-  - Full-bleed titlebar styling with `-webkit-app-region: drag` enables dragging the Electron window by grabbing anywhere on the header background or titles, while all buttons and inputs retain `-webkit-app-region: no-drag` for crisp click responsiveness.
-
-### Native Electron Always-on-Top Floating Mode (`/api/electron-float`)
-- **Direct Window Transformation**:
-  - Solved Electron's lack of standard W3C `documentPictureInPicture` support by transforming `mainWindow` itself into a compact (480×620), frameless Always-on-Top reference window over Blender/Photoshop via `setFloatingMode(mainWindow, true)`.
-  - HTTP endpoint `POST /api/electron-float` in `server.js` triggers `toggleFloatMode(mainWindow)` in `electron-main.js`, hiding macOS traffic lights (`setWindowButtonVisibility(false)`) and caching window bounds for 1-click restore.
-  - Features `#electron-float-bar` drag handle and instant "Restore" button (`#btn-electron-unfloat`), hotkey <kbd>V</kbd>, and menu shortcut <kbd>Cmd+Shift+A</kbd>.
-  - Features Ghost Mode click-through overlay (<kbd>Cmd+Shift+G</kbd>) with 40% translucent opacity via `win.setOpacity(0.40)` and per-window opacity preservation/restoration via `windowGhostStates` WeakMap, custom vector SVG ghost iconography across `#ghost-mode-banner`, `#btn-electron-ghost`, and HUD toasts.
-  - Seamless fallback to browser Document PiP and Safari canvas video streamer for web users.
-- **Per-Window Floating State & Window Isolation (`windowStates` WeakMap)**:
-  - Eliminated global state variables (`isWindowFloating`, `normalWindowBounds`, `isWindowAlwaysOnTop`, `isWindowGhostMode`).
-  - Implemented independent per-window state using a `WeakMap<BrowserWindow, Object>` keyed by `BrowserWindow` instance.
-  - Each window maintains its own independent floating state, previous normal bounds, and always-on-top level.
-  - Child windows never share or overwrite the main window's saved bounds or toggle its state.
-  - State is automatically collected on window close/destruction via `cleanupWindowState(win)`.
-  - Application menu checkboxes (`menu-float-mode`, `menu-always-on-top`, `menu-ghost-mode`) strictly reflect the primary `mainWindow` state.
-
-### Categorized Studio Tools Dock & Compact Window Ergonomics
-- **Categorized Dock Organization (`#dock-category-bar`)**:
-  - Grouped all 16 artist tools into 3 semantic categories plus an all-tools view:
-    • `Tonal`: Value Check (`G`), Notan (`N`), Gesture Silhouette (`L`), Tonal Posterize (`P`), Squint Blur (`S`), Invert Colors (`I`).
-    • `Critique`: Onion-Skin Overlay (`K`), Visual History (`Y`), Dominant Palette Swatches (`E`), Focal Crop (`C`), Quick Tag (`T`).
-    • `Canvas`: Plumb & Angle Measurement (`U`), Proportion Grid (`O`), Flip Horizontal (`M`), Rotate 90° (`R`), Zoom controls (`－`, `100%`, `＋`).
-  - 2×2 segmented grid switcher: Row 1 (`All`, `Tonal`), Row 2 (`Critique`, `Canvas`) on a 182px dock eliminates label overlapping and prevents button label truncation.
-  - Active tool indicators (`.cat-indicator-dot`): amber notification dots light up next to category tabs when active tools run in background tabs.
-- **Freely Hideable Tools Dock Even With Active Filters**:
-  - Removed `.image-hud-dock:has(.filter-controls-dock:not(.hidden))` so active subpanels (Silhouette threshold, Posterize steps, Squint blur radius) never lock the dock open.
-  - Clicking the arrow tab (`#btn-dock-toggle`), clicking the stage canvas, or pressing <kbd>Esc</kbd> smoothly slides the tools dock completely off-screen while keeping all active filters rendering on the artwork.
-- **Auto-Hiding Bottom Rating Dock (`#session-rating-area`)**:
-  - The rating area (Again, Hard, Good, Easy, Skip, and sketch dropzone) now behaves like the side dock: retracted down below the screen edge by default (`translateY(100%)`).
-  - Sleek `[ ▲ Rate ]` arrow tab (`#btn-rating-toggle`) rests at the bottom edge. Clicking it slides the rating tray smoothly up (`translateY(0)`) and flips the arrow to `[ ▼ Hide ]`.
-  - When the timer expires, the rating tray automatically slides up into view; rating advances to the next card and automatically slides the tray back down into hiding.
-  - Gives the reference artwork **100% full screen height** throughout the entire study session with zero visual obstruction.
-  - In Floating Mode / Document PiP, `#btn-rating-toggle` (`.rating-toggle-tab`) is completely hidden, preventing the `^ Rate` tab from protruding over the reference or floating pill. The rating pill reveals smoothly on hover or timer expiry.
-  - The `[1]` keybind badge on the Again button is reset from absolute to static flex flow (`position: static`), eliminating badge-over-text collision.
-
-### Hardened Electron Popup & Child Window Security
-- **Strict Origin Verification (`isTrustedAppUrl`)**:
-  - Validates all internal navigations and popups against the exact active Express port (`http://localhost:${port}` or `http://127.0.0.1:${port}`).
-  - Rejects arbitrary localhost ports (e.g. 8080, 5000), deceptive domains (`localhost.evil.com`), and non-HTTP schemes.
-- **Preload Least-Privilege & Child Window Sandbox (`child-preload.js`)**:
-  - Child / PiP windows are stripped of privileged host APIs (`pickDirectory`, window mutation). Only minimal unprivileged metadata (`isElectron: true, isChildWindow: true`) is exposed.
-  - Enabled Chromium process sandbox (`sandbox: true`) across both `mainWindow` and child windows alongside `contextIsolation: true` and `nodeIntegration: false`.
-- **Safe External Link Protocol Whitelist (`safeOpenExternal`)**:
-  - Replaced unvalidated `shell.openExternal(url)` calls with strict protocol validation: only `http:` and `https:` schemes are permitted. Dangerous schemes (`file:`, `javascript:`, `data:`, `shell:`, `applescript:`) are blocked and logged.
-- **Navigation & Redirect Lock (`will-navigate` & `will-redirect`)**:
-  - Both main and child window webContents register `will-navigate` and `will-redirect` guards preventing renderer frames from ever navigating away to untrusted external origins. Unexpected external navigations/redirects are cancelled and safely delegated to the OS default browser.
-- **Zero-Trust Permission Handlers (`setPermissionRequestHandler` & `setPermissionCheckHandler`)**:
-  - Registered on `session.defaultSession` to automatically deny all device, sensor, camera, microphone, notification, and hardware access requests across all windows.
-- **IPC Sender Validation (`isTrustedIpcSender`)**:
-  - All sensitive IPC handlers (`dialog:pick-directory`, `toggle-float-mode`, `set-always-on-top`) validate the sender's frame origin and verify that directory picker dialogs can only ever be requested by the primary `mainWindow`.
+### 7.3 Userdata Migration & Safety
+- `isDestinationFileValid(destPath, srcStat, srcPath)` treats `userdata/srs_state.json` as **replaceable** if it parses but contains 0 decks and 0 cards while the source file contains data.
+- Before overwriting, it creates an atomic backup at `userdata/srs_state.json.pre-migration`.
+- Migration copies files atomically and verifies content validity before writing the completion marker.
 
 ---
 
-## Development Guide
+## 8. Known Limitations
 
-1. Multi-file modular architecture permitted: Frontend code can be organized across modular files (e.g. `public/js/` or feature-specific modules) instead of being restricted to a single monolithic `app.js`.
-2. Views are toggled via `.active` class on `.view` divs
-3. Modals use `.hidden` class toggle on `.modal-overlay` divs
-4. To add a new feature, typically: add HTML element → add CSS → add JS handler in respective module
-5. Server restart needed only when changing `server.js` or `electron-main.js` (frontend changes are live-reload via browser refresh)
+1. **Linux Click-Through Restriction**:
+   - The X11/Wayland window managers on Linux do not reliably support `setIgnoreMouseEvents` with `{ forward: true }`.
+   - On Linux, Ghost Mode falls back to opacity adjustment only (click-through disabled), and the UI displays an informative notice.
+2. **Hard Rating Halves Interval**:
+   - For review cards, rating `Hard` reduces the interval to `Math.max(1, Math.round(prevInterval * 0.5))`. While standard SM-2 often advances by a smaller factor (e.g. 1.2×) or preserves the interval, Art Practice Studio deliberately halves it to force earlier reinforcement of strained artistic recall.
+3. **Application Menu Window Scope**:
+   - macOS application menu checkmarks (`Float Mode`, `Always on Top`, `Ghost Mode`) reflect the state of `mainWindow` only. If a detached child window has differing settings, the menu does not update to match the child window.
+4. **External Wallpaper URLs**:
+   - The wallpaper URL input box was removed to prevent CSP violations under `img-src 'self' data: blob:`. Remote web images must be downloaded locally or pasted into the app before setting them as wallpapers.
+5. **Browse Endpoint Disabled in Electron**:
+   - `GET /api/browse` returns `404` when running inside Electron. Desktop users must use the native OS folder picker (`dialog:pick-directory`), preserving filesystem isolation.
 
 ---
 
-*Last updated: 2026-11-08*
+## 9. Verification Matrix
+
+| Claim | Source File | Line / Scope | Status | Notes |
+|---|---|---|---|---|
+| Origin gate Host verification | `server.js` | Lines 16–25 | **VERIFIED** | Rejects host mismatch with 403 |
+| State-changing methods origin check | `server.js` | Lines 38–50 | **VERIFIED** | Enforces allowedOrigins & Sec-Fetch-Site |
+| App HTML CSP headers | `server.js` | Lines 58–75 | **VERIFIED** | Sends `default-src 'self'; img-src 'self' data: blob:...` |
+| `/api/image` extension whitelist & sandbox CSP | `server.js` | Lines 457–514 | **VERIFIED** | 415 on invalid ext, sends `sandbox; default-src 'none'` |
+| `/api/image` Electron deck folder boundary | `server.js` | Lines 478–491 | **VERIFIED** | Enforces `isPathAllowedInRegisteredDecks` (403) |
+| `/api/sync` 409 wipe protection | `server.js` | Lines 754–777 | **VERIFIED** | Requires `confirmReplace: true` |
+| Backup rotation `.bak1`..`.bak5` & snapshots | `server.js` | Lines 525–705 | **VERIFIED** | 10-min rotation throttle, 7-day snapshot retention |
+| `/api/sketch` 15MB limit & magic bytes | `server.js` | Lines 882–912 | **VERIFIED** | 413 on >15MB, 415 on non-PNG/JPEG/WebP |
+| `/api/download-url` SSRF port & IP blocking | `server.js` | Lines 1220–1373 | **VERIFIED** | Ports 80/443 only, private IP check, Referer strip |
+| WeakMap window states & cleanup | `electron-main.js` | Lines 385–415 | **VERIFIED** | Keyed by BrowserWindow, cleaned on 'closed' |
+| Ghost Mode 60s auto-restore timer | `electron-main.js` | Lines 560–620 | **VERIFIED** | Restores mouse interaction unless keepGhost is set |
+| Opt-in blur-loss failsafe | `electron-main.js` | Lines 765–805 | **VERIFIED** | Exits Ghost Mode on window blur only when enabled |
+| Linux click-through restriction | `electron-main.js` | Lines 1496–1500 | **VERIFIED** | Skips click-through on Linux |
+| `isDestinationFileValid` 0-data replacement | `electron-main.js` | Lines 119–143 | **VERIFIED** | Returns false when dest is empty and legacy has data |
+| `.pre-migration` backup creation | `electron-main.js` | Lines 263–274 | **VERIFIED** | Atomically backs up replaced state file |
+| `rateCard` SM-2 formulas & bounds | `public/app.js` | Lines 1220–1327 | **VERIFIED** | Floor 1.5, ceiling 3.0, mean reversion to 2.30 |
+| Hard rating halves interval | `public/app.js` | Line 1253 | **VERIFIED** | `Math.max(1, Math.round(prevInterval * 0.5))` |
+| First two reviews <=45s Easy cap at 4d | `public/app.js` | Lines 1241, 1283 | **VERIFIED** | Interval capped to max 4 days |
+| `localDateStr` local calendar time | `public/app.js` | Lines 66–87 | **VERIFIED** | Uses local `getFullYear()`, `getMonth()`, `getDate()` |
+| `UI._esc` HTML attribute escaping | `public/app.js` | Lines 89–97 | **VERIFIED** | Escapes `&`, `<`, `>`, `"`, `'` |
+| Zero inline scripts in index.html | `public/index.html` | Lines 15, 2127 | **VERIFIED** | Only loads `env-detect.js` and `app.js` |
+| Test suite passes all tests | `tests/*.test.js` | 11 test suites | **VERIFIED** | 80/80 passing tests via `npm test` |

@@ -9,21 +9,151 @@ const dns = require('dns');
 const { URL } = require('url');
 
 const app = express();
+let boundServerPort = null;
 const PORT = process.env.PORT || 3000;
+
+// API Security Middleware registered before any route
+app.use('/api', (req, res, next) => {
+  const boundPort = req.socket?.localPort || boundServerPort || app.get('port') || PORT;
+  const host = req.headers.host;
+  const allowedHosts = [`127.0.0.1:${boundPort}`, `localhost:${boundPort}`];
+
+  // 1. Rejects unless the Host header is exactly 127.0.0.1:<boundPort> or localhost:<boundPort>
+  if (!host || !allowedHosts.includes(host)) {
+    return res.status(403).json({ error: 'Forbidden: invalid Host header' });
+  }
+
+  // Reject Sec-Fetch-Site: cross-site for all /api requests, GET included
+  const secFetchSite = req.headers['sec-fetch-site'];
+  if (secFetchSite === 'cross-site') {
+    return res.status(403).json({ error: 'Forbidden: cross-site request rejected' });
+  }
+
+  // Reject opaque / null origins for all /api requests
+  const origin = req.headers.origin;
+  if (origin === 'null') {
+    return res.status(403).json({ error: 'Forbidden: null origin rejected' });
+  }
+
+  // 2. Rejects state-changing methods (POST/PUT/PATCH/DELETE) unless Origin is absent or equals the app origin,
+  // and Sec-Fetch-Site (when present) is same-origin or none
+  const method = req.method ? req.method.toUpperCase() : '';
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+    const allowedOrigins = [`http://127.0.0.1:${boundPort}`, `http://localhost:${boundPort}`];
+    if (origin && !allowedOrigins.includes(origin)) {
+      return res.status(403).json({ error: 'Forbidden: cross-origin request rejected' });
+    }
+
+    if (secFetchSite && secFetchSite !== 'same-origin' && secFetchSite !== 'none') {
+      return res.status(403).json({ error: 'Forbidden: invalid Sec-Fetch-Site' });
+    }
+  }
+
+  next();
+});
 
 // Enable JSON body parser with generous limit for large image collections & review history
 app.use(express.json({ limit: '50mb' }));
 
+// CSP header on the app HTML
+const APP_CSP = "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'";
+
+app.use((req, res, next) => {
+  if (req.path === '/' || req.path.endsWith('.html')) {
+    res.setHeader('Content-Security-Policy', APP_CSP);
+  }
+  next();
+});
+
 // Serve static files from public/
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Content-Security-Policy', APP_CSP);
+    }
+  }
+}));
 
 // Persistent Disk Storage for SRS Database & Visual Sketch History
 const USERDATA_DIR = process.env.USER_DATA_DIR || path.join(__dirname, 'userdata');
 const STATE_FILE = path.join(USERDATA_DIR, 'srs_state.json');
 const SKETCHES_DIR = path.join(USERDATA_DIR, 'sketches');
+const BACKUPS_DIR = path.join(USERDATA_DIR, 'backups');
 
-// Ensure userdata and sketches directories exist on startup
+// Ensure userdata, sketches, and backups directories exist on startup
 fs.mkdirSync(SKETCHES_DIR, { recursive: true });
+fs.mkdirSync(BACKUPS_DIR, { recursive: true });
+
+// In-memory set of folders explicitly trusted (e.g. chosen via native folder picker this session)
+const trustedFolders = new Set();
+
+/**
+ * Registers an absolute folder path into the trusted folders Set.
+ * Canonicalizes via fs.realpathSync (or path.resolve if realpath fails).
+ */
+function registerTrustedFolder(absPath) {
+  if (!absPath || typeof absPath !== 'string') return;
+  try {
+    const real = fs.realpathSync(absPath);
+    trustedFolders.add(real);
+  } catch (e) {
+    trustedFolders.add(path.resolve(absPath));
+  }
+}
+
+function clearTrustedFolders() {
+  trustedFolders.clear();
+}
+
+/**
+ * Returns a Set of resolved real paths for all registered deck folders
+ * as the union of folders from STATE_FILE and in-memory trustedFolders.
+ */
+function getRegisteredDeckFolders() {
+  const folders = new Set(trustedFolders);
+  if (fs.existsSync(STATE_FILE)) {
+    try {
+      const raw = fs.readFileSync(STATE_FILE, 'utf8');
+      const state = JSON.parse(raw);
+      const decks = Array.isArray(state.decks)
+        ? state.decks
+        : (state.data && Array.isArray(state.data.decks) ? state.data.decks : []);
+      for (const d of decks) {
+        if (d && d.folderPath) {
+          try {
+            folders.add(fs.realpathSync(d.folderPath));
+          } catch (e) {
+            folders.add(path.resolve(d.folderPath));
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[Server] Error reading registered deck folders from STATE_FILE:', e.message);
+    }
+  }
+  return folders;
+}
+
+function isPathInside(childPath, parentPath) {
+  const rel = path.relative(parentPath, childPath);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+function isPathAllowedInRegisteredDecks(targetPath) {
+  let realTarget;
+  try {
+    realTarget = fs.realpathSync(targetPath);
+  } catch (e) {
+    realTarget = path.resolve(targetPath);
+  }
+  const deckFolders = getRegisteredDeckFolders();
+  for (const df of deckFolders) {
+    if (realTarget === df || isPathInside(realTarget, df)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 /**
  * Startup helper: checks userdata/srs_state.json once when the server starts
@@ -49,18 +179,31 @@ function migrateBase64SketchesOnStartup() {
         if (!card || !Array.isArray(card.attempts)) continue;
 
         for (const attempt of card.attempts) {
-          if (attempt && typeof attempt.sketchUrl === 'string' && attempt.sketchUrl.startsWith('data:image/')) {
-            try {
-              const base64Data = attempt.sketchUrl.replace(/^data:image\/[a-zA-Z0-9+]+;base64,/, '');
-              const buffer = Buffer.from(base64Data, 'base64');
-              const filename = `sk_migrated_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.png`;
-              const filePath = path.join(SKETCHES_DIR, filename);
+          if (attempt && typeof attempt.sketchUrl === 'string') {
+            if (attempt.sketchUrl.startsWith('data:image/')) {
+              try {
+                const base64Data = attempt.sketchUrl.replace(/^data:image\/[a-zA-Z0-9+]+;base64,/, '');
+                const buffer = Buffer.from(base64Data, 'base64');
+                const filename = `sk_migrated_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.png`;
+                const filePath = path.join(SKETCHES_DIR, filename);
 
-              fs.writeFileSync(filePath, buffer);
-              attempt.sketchUrl = `/api/sketch/${filename}`;
-              migratedCount++;
-            } catch (err) {
-              console.warn(`[Migration] Failed to migrate sketch for card ${cardId}:`, err.message);
+                fs.writeFileSync(filePath, buffer);
+                attempt.sketchUrl = `/api/sketch/${filename}`;
+                migratedCount++;
+              } catch (err) {
+                console.warn(`[Migration] Failed to migrate sketch for card ${cardId}:`, err.message);
+              }
+            } else if (attempt.sketchUrl.startsWith('/api/sketch?file=')) {
+              try {
+                const urlObj = new URL(attempt.sketchUrl, 'http://localhost');
+                const fileParam = urlObj.searchParams.get('file');
+                if (fileParam) {
+                  attempt.sketchUrl = `/api/sketch/${path.basename(fileParam)}`;
+                  migratedCount++;
+                }
+              } catch (err) {
+                console.warn(`[Migration] Failed to migrate legacy sketchUrl for card ${cardId}:`, err.message);
+              }
             }
           }
         }
@@ -166,6 +309,10 @@ function scanForImages(dirPath, results = []) {
  * Defaults to user's home directory if no path given.
  */
 app.get('/api/browse', (req, res) => {
+  if (process.env.APP_RUNTIME === 'electron') {
+    return res.status(404).json({ error: 'Endpoint not available in desktop runtime' });
+  }
+
   const os = require('os');
   const requestedPath = req.query.path || os.homedir();
   const resolved = path.resolve(requestedPath);
@@ -227,6 +374,12 @@ app.get('/api/images', (req, res) => {
   // Resolve to absolute path
   const resolved = path.resolve(folderPath);
 
+  if (process.env.APP_RUNTIME === 'electron') {
+    if (!isPathAllowedInRegisteredDecks(resolved)) {
+      return res.status(403).json({ error: 'Access denied: folder is not a registered deck folder' });
+    }
+  }
+
   // Check if the directory exists
   if (!fs.existsSync(resolved)) {
     return res.status(404).json({ error: `Folder not found: ${resolved}` });
@@ -270,6 +423,13 @@ app.get('/api/deck-meta', (req, res) => {
   }
 
   const resolved = path.resolve(folderPath);
+
+  if (process.env.APP_RUNTIME === 'electron') {
+    if (!isPathAllowedInRegisteredDecks(resolved)) {
+      return res.status(403).json({ error: 'Access denied: folder is not a registered deck folder' });
+    }
+  }
+
   if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
     return res.status(404).json({ error: `Folder not found: ${resolved}` });
   }
@@ -307,14 +467,43 @@ app.get('/api/image', (req, res) => {
     target = hashToPathMap.get(target);
   }
 
+  const allowedExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tif', '.tiff', '.svg'];
+  const ext = path.extname(target).toLowerCase();
+  if (!allowedExtensions.includes(ext)) {
+    return res.status(415).json({ error: `Unsupported media type: ${ext || 'none'}` });
+  }
+
   const resolved = path.resolve(target);
 
-  if (!fs.existsSync(resolved)) {
+  let realPath;
+  try {
+    realPath = fs.realpathSync(resolved);
+  } catch (err) {
     return res.status(404).json({ error: `File not found: ${resolved}` });
   }
 
+  const realExt = path.extname(realPath).toLowerCase();
+  if (!allowedExtensions.includes(realExt)) {
+    return res.status(415).json({ error: `Unsupported media type: ${realExt || 'none'}` });
+  }
+
+  // When APP_RUNTIME === 'electron', require resolved real path to be inside a folder in getRegisteredDeckFolders() or inside USERDATA_DIR
+  if (process.env.APP_RUNTIME === 'electron') {
+    let realUserDataDir;
+    try {
+      realUserDataDir = fs.realpathSync(USERDATA_DIR);
+    } catch (e) {
+      realUserDataDir = path.resolve(USERDATA_DIR);
+    }
+
+    const isAllowed = isPathInside(realPath, realUserDataDir) || isPathAllowedInRegisteredDecks(realPath);
+
+    if (!isAllowed) {
+      return res.status(403).json({ error: 'Access denied: path is not inside a registered deck folder or userdata directory' });
+    }
+  }
+
   // Determine MIME type
-  const ext = path.extname(resolved).toLowerCase();
   const mimeTypes = {
     '.jpg': 'image/jpeg',
     '.jpeg': 'image/jpeg',
@@ -327,22 +516,178 @@ app.get('/api/image', (req, res) => {
     '.tif': 'image/tiff'
   };
 
-  const contentType = mimeTypes[ext] || 'application/octet-stream';
+  const contentType = mimeTypes[realExt] || 'application/octet-stream';
   res.setHeader('Content-Type', contentType);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
   if (req.query.hash) {
     res.setHeader('Cache-Control', 'public, max-age=86400');
   }
-  res.sendFile(resolved);
+  res.sendFile(realPath);
 });
 
 /**
- * POST /api/sync
- * Writes the SRS database (cards, decks, history, wallpaper settings) directly to userdata/srs_state.json.
- * Uses a serialized Promise queue, unique .tmp file, fileHandle.sync(), and .bak backup before rename.
+ * Backup rotation & state writing utilities:
+ * - Rotates srs_state.json.bak1..bak5 (shifted on write, throttled to at most once per 10 minutes)
+ * - Keeps one daily snapshot for the last 7 days in userdata/backups/
+ * - Logs all rotations
  */
 let stateWriteQueue = Promise.resolve();
+let lastRotationTime = 0;
+let customClock = null;
+const ROTATION_WINDOW_MS = 10 * 60 * 1000; // 10 minutes default
+const BACKUP_COUNT = 5;
 
-async function writeStateFile(state) {
+function setRotationClock(clockFn) {
+  customClock = clockFn;
+}
+
+function resetRotationState() {
+  lastRotationTime = 0;
+  customClock = null;
+}
+
+function getNow(options = {}) {
+  if (typeof options.now === 'number') return options.now;
+  if (typeof options.clock === 'function') return options.clock();
+  if (typeof customClock === 'function') return customClock();
+  return Date.now();
+}
+
+function getLocalDateString(dateInput = new Date()) {
+  const d = dateInput instanceof Date ? dateInput : new Date(dateInput);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function pruneDailySnapshots(backupsDir, maxDays = 7) {
+  try {
+    if (!fs.existsSync(backupsDir)) return;
+    const files = fs.readdirSync(backupsDir)
+      .filter(f => /^srs_state_\d{4}-\d{2}-\d{2}\.json$/.test(f))
+      .sort(); // chronological sort for YYYY-MM-DD
+
+    if (files.length > maxDays) {
+      const toDelete = files.slice(0, files.length - maxDays);
+      for (const f of toDelete) {
+        try {
+          fs.unlinkSync(path.join(backupsDir, f));
+          console.log(`[Sync] Pruned old daily snapshot: ${f}`);
+        } catch (e) {}
+      }
+    }
+  } catch (err) {
+    console.warn('[Sync] Error pruning daily snapshots:', err.message);
+  }
+}
+
+function rotateBackups(options = {}) {
+  if (!fs.existsSync(STATE_FILE)) return;
+
+  const now = getNow(options);
+  let lastMtime = 0;
+  const bak1 = `${STATE_FILE}.bak1`;
+  if (fs.existsSync(bak1)) {
+    try {
+      lastMtime = fs.statSync(bak1).mtimeMs;
+    } catch (e) {}
+  }
+  const lastTime = Math.max(lastRotationTime, lastMtime);
+  const minInterval = options.minRotationIntervalMs !== undefined
+    ? options.minRotationIntervalMs
+    : (process.env.SYNC_ROTATION_INTERVAL_MS !== undefined ? parseInt(process.env.SYNC_ROTATION_INTERVAL_MS, 10) : ROTATION_WINDOW_MS);
+
+  const shouldRotate = options.forceRotation || (now - lastTime >= minInterval);
+
+  if (!shouldRotate) {
+    return;
+  }
+
+  try {
+    // 1. Shift bak1..bak5
+    const bak5 = `${STATE_FILE}.bak5`;
+    if (fs.existsSync(bak5)) {
+      try { fs.unlinkSync(bak5); } catch (e) {}
+    }
+
+    for (let i = BACKUP_COUNT - 1; i >= 1; i--) {
+      const src = `${STATE_FILE}.bak${i}`;
+      const dest = `${STATE_FILE}.bak${i + 1}`;
+      if (fs.existsSync(src)) {
+        try {
+          fs.renameSync(src, dest);
+        } catch (err) {
+          console.warn(`[Sync] Error shifting backup ${src} to ${dest}:`, err.message);
+        }
+      }
+    }
+
+    // Copy current STATE_FILE to bak1
+    fs.copyFileSync(STATE_FILE, bak1);
+    lastRotationTime = now;
+    if (options.clock || options.now || customClock) {
+      try {
+        fs.utimesSync(bak1, new Date(now), new Date(now));
+      } catch (e) {}
+    }
+    console.log(`[Sync] Rotated backups: ${path.basename(STATE_FILE)} -> .bak1 (holding up to .bak${BACKUP_COUNT})`);
+  } catch (err) {
+    console.warn('[Sync] Failed during backup rotation:', err.message);
+  }
+}
+
+function createDailySnapshot(options = {}) {
+  try {
+    if (!fs.existsSync(BACKUPS_DIR)) {
+      fs.mkdirSync(BACKUPS_DIR, { recursive: true });
+    }
+
+    if (!fs.existsSync(STATE_FILE)) return;
+
+    const now = getNow(options);
+    const todayStr = getLocalDateString(new Date(now));
+    const dailySnapshotPath = path.join(BACKUPS_DIR, `srs_state_${todayStr}.json`);
+
+    // Only create if today's snapshot doesn't exist yet
+    if (!fs.existsSync(dailySnapshotPath)) {
+      // Taken from the new state (STATE_FILE was just atomically replaced with new state)
+      fs.copyFileSync(STATE_FILE, dailySnapshotPath);
+      console.log(`[Sync] Created daily snapshot: ${path.basename(dailySnapshotPath)}`);
+    }
+
+    // Prune daily snapshots older than 7 days
+    pruneDailySnapshots(BACKUPS_DIR, 7);
+  } catch (err) {
+    console.warn('[Sync] Failed creating daily snapshot:', err.message);
+  }
+}
+
+function getBackupCandidates() {
+  const candidates = [];
+  // 1. srs_state.json.bak1..bak5
+  for (let i = 1; i <= BACKUP_COUNT; i++) {
+    candidates.push(`${STATE_FILE}.bak${i}`);
+  }
+  // 2. Legacy srs_state.json.bak
+  candidates.push(`${STATE_FILE}.bak`);
+  // 3. Daily snapshots in userdata/backups/ (newest first)
+  if (fs.existsSync(BACKUPS_DIR)) {
+    try {
+      const dailyFiles = fs.readdirSync(BACKUPS_DIR)
+        .filter(f => /^srs_state_\d{4}-\d{2}-\d{2}\.json$/.test(f))
+        .sort()
+        .reverse();
+      for (const f of dailyFiles) {
+        candidates.push(path.join(BACKUPS_DIR, f));
+      }
+    } catch (e) {}
+  }
+  return candidates;
+}
+
+async function writeStateFile(state, options = {}) {
   const task = async () => {
     if (!fs.existsSync(USERDATA_DIR)) {
       await fs.promises.mkdir(USERDATA_DIR, { recursive: true });
@@ -352,7 +697,6 @@ async function writeStateFile(state) {
     if (fs.existsSync(tempFile)) {
       tempFile = `${STATE_FILE}.${Date.now()}_${Math.random().toString(36).slice(2, 6)}.tmp`;
     }
-    const bakFile = `${STATE_FILE}.bak`;
     const jsonStr = JSON.stringify(state, null, 2);
 
     const fileHandle = await fs.promises.open(tempFile, 'w');
@@ -363,15 +707,14 @@ async function writeStateFile(state) {
       await fileHandle.close();
     }
 
-    if (fs.existsSync(STATE_FILE)) {
-      try {
-        await fs.promises.copyFile(STATE_FILE, bakFile);
-      } catch (bakErr) {
-        console.warn('[Sync] Failed to backup previous state file:', bakErr);
-      }
-    }
+    // Rotate backups before atomically replacing the primary state file
+    rotateBackups(options);
 
     await fs.promises.rename(tempFile, STATE_FILE);
+
+    // Create daily snapshot from the new state using LOCAL date
+    createDailySnapshot(options);
+
     return await fs.promises.stat(STATE_FILE);
   };
 
@@ -387,26 +730,97 @@ app.post('/api/sync', async (req, res) => {
       return res.status(400).json({ error: 'Invalid JSON payload for sync' });
     }
 
+    const incomingDecks = Array.isArray(payload.decks) ? payload.decks : [];
+    const incomingCards = payload.cards && typeof payload.cards === 'object' ? payload.cards : {};
+
+    // Validate sketch URLs in attempts: reject dangerous schemes like javascript:, and drop invalid sketch URLs
+    for (const deckId of Object.keys(incomingCards)) {
+      const deckCards = incomingCards[deckId];
+      if (deckCards && typeof deckCards === 'object') {
+        for (const cardId of Object.keys(deckCards)) {
+          const card = deckCards[cardId];
+          if (card && Array.isArray(card.attempts)) {
+            for (const att of card.attempts) {
+              if (att && att.sketchUrl) {
+                const sUrl = String(att.sketchUrl).trim().toLowerCase();
+                if (sUrl.startsWith('javascript:') || sUrl.startsWith('vbscript:') || sUrl.startsWith('data:text/html')) {
+                  return res.status(400).json({ error: 'Rejected: payload contains disallowed sketchUrl scheme' });
+                }
+                if (sUrl.startsWith('/api/sketch?file=')) {
+                  try {
+                    const urlObj = new URL(att.sketchUrl, 'http://localhost');
+                    const fileParam = urlObj.searchParams.get('file');
+                    if (fileParam) {
+                      att.sketchUrl = `/api/sketch/${path.basename(fileParam)}`;
+                    }
+                  } catch (e) {}
+                }
+                const updatedUrl = String(att.sketchUrl).trim().toLowerCase();
+                const valid = updatedUrl.startsWith('/api/sketch/') ||
+                  updatedUrl.startsWith('/api/sketch?file=') ||
+                  updatedUrl.startsWith('data:image/png') ||
+                  updatedUrl.startsWith('data:image/jpeg') ||
+                  updatedUrl.startsWith('data:image/webp');
+                if (!valid) {
+                  delete att.sketchUrl;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    const incomingDeckCount = incomingDecks.length;
+    const incomingCardCount = Object.values(incomingCards).reduce((acc, d) => acc + Object.keys(d || {}).length, 0);
+
+    // Guard against accidental database wipe: 0 decks AND 0 cards while existing file has >0 of either
+    if (incomingDeckCount === 0 && incomingCardCount === 0 && !payload.confirmReplace) {
+      let existingDeckCount = 0;
+      let existingCardCount = 0;
+
+      if (fs.existsSync(STATE_FILE)) {
+        try {
+          const raw = fs.readFileSync(STATE_FILE, 'utf8');
+          const existing = JSON.parse(raw);
+          const eDecks = Array.isArray(existing.decks) ? existing.decks : [];
+          const eCards = existing.cards && typeof existing.cards === 'object'
+            ? existing.cards
+            : (existing.data && existing.data.cards ? existing.data.cards : {});
+          existingDeckCount = eDecks.length;
+          existingCardCount = Object.values(eCards).reduce((acc, d) => acc + Object.keys(d || {}).length, 0);
+        } catch (e) {}
+      }
+
+      if (existingDeckCount > 0 || existingCardCount > 0) {
+        return res.status(409).json({
+          error: 'Conflict: Incoming state has 0 decks and 0 cards while existing state contains data. Use confirmReplace: true to overwrite.'
+        });
+      }
+    }
+
     const state = {
       version: 1,
       lastSaved: new Date().toISOString(),
-      decks: Array.isArray(payload.decks) ? payload.decks : [],
-      cards: payload.cards && typeof payload.cards === 'object' ? payload.cards : {},
+      decks: incomingDecks,
+      cards: incomingCards,
       history: payload.history && typeof payload.history === 'object' ? payload.history : {},
       wallpaperSettings: payload.wallpaperSettings || null
     };
 
-    const stats = await writeStateFile(state);
+    const writeOptions = {
+      forceRotation: Boolean(payload.forceRotation || req.headers['x-force-rotation']),
+      minRotationIntervalMs: typeof payload.minRotationIntervalMs === 'number' ? payload.minRotationIntervalMs : undefined
+    };
 
-    const totalDecks = state.decks.length;
-    const totalCards = Object.values(state.cards).reduce((acc, d) => acc + Object.keys(d || {}).length, 0);
+    const stats = await writeStateFile(state, writeOptions);
 
     res.json({
       success: true,
       lastSaved: state.lastSaved,
       sizeBytes: stats.size,
-      decksCount: totalDecks,
-      cardsCount: totalCards
+      decksCount: incomingDeckCount,
+      cardsCount: incomingCardCount
     });
   } catch (err) {
     console.error('[API /api/sync] Error writing SRS state to disk:', err);
@@ -417,49 +831,56 @@ app.post('/api/sync', async (req, res) => {
 /**
  * GET /api/sync
  * Reads the persistent SRS database from userdata/srs_state.json on disk.
- * Falls back to srs_state.json.bak if the primary file fails JSON parsing.
+ * Falls back through the backups in order (bak1..bak5, legacy .bak, daily snapshots) if primary is invalid.
  */
 app.get('/api/sync', (req, res) => {
-  const bakFile = `${STATE_FILE}.bak`;
   try {
-    if (!fs.existsSync(STATE_FILE)) {
-      if (fs.existsSync(bakFile)) {
-        try {
-          const bakRaw = fs.readFileSync(bakFile, 'utf8');
-          const data = JSON.parse(bakRaw);
-          console.warn('[API /api/sync] Primary STATE_FILE not found; recovered from .bak');
-          return res.json({
-            exists: true,
-            lastSaved: data.lastSaved,
-            data
-          });
-        } catch (bakErr) {
-          console.error('[API /api/sync] Error reading backup SRS state from disk:', bakErr);
+    let data = null;
+    let loadedFrom = null;
+
+    if (fs.existsSync(STATE_FILE)) {
+      try {
+        const raw = fs.readFileSync(STATE_FILE, 'utf8');
+        data = JSON.parse(raw);
+        loadedFrom = STATE_FILE;
+      } catch (parseErr) {
+        console.warn('[API /api/sync] Primary STATE_FILE corrupted/invalid JSON, falling back to backups:', parseErr.message);
+      }
+    } else {
+      console.warn('[API /api/sync] Primary STATE_FILE not found, searching backups...');
+    }
+
+    if (!data) {
+      const candidates = getBackupCandidates();
+      for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) {
+          try {
+            const raw = fs.readFileSync(candidate, 'utf8');
+            data = JSON.parse(raw);
+            loadedFrom = candidate;
+            console.warn(`[API /api/sync] Successfully recovered SRS state from backup: ${path.basename(candidate)}`);
+            break;
+          } catch (bakErr) {
+            console.warn(`[API /api/sync] Backup ${path.basename(candidate)} is corrupted/invalid:`, bakErr.message);
+          }
         }
       }
+    }
+
+    if (data) {
+      return res.json({
+        exists: true,
+        lastSaved: data.lastSaved,
+        data,
+        recoveredFrom: loadedFrom !== STATE_FILE && loadedFrom ? path.basename(loadedFrom) : undefined
+      });
+    }
+
+    if (!fs.existsSync(STATE_FILE)) {
       return res.json({ exists: false, data: null });
     }
 
-    let data;
-    try {
-      const raw = fs.readFileSync(STATE_FILE, 'utf8');
-      data = JSON.parse(raw);
-    } catch (parseErr) {
-      console.warn('[API /api/sync] Primary STATE_FILE corrupted/invalid JSON, falling back to .bak:', parseErr.message);
-      if (fs.existsSync(bakFile)) {
-        const bakRaw = fs.readFileSync(bakFile, 'utf8');
-        data = JSON.parse(bakRaw);
-        console.warn('[API /api/sync] Successfully recovered SRS state from .bak file');
-      } else {
-        throw parseErr;
-      }
-    }
-
-    res.json({
-      exists: true,
-      lastSaved: data.lastSaved,
-      data
-    });
+    res.status(500).json({ error: 'Failed to read SRS database: primary file and all backups are corrupted or unreadable' });
   } catch (err) {
     console.error('[API /api/sync] Error reading SRS state from disk:', err);
     res.status(500).json({ error: `Failed to read SRS database from disk: ${err.message}` });
@@ -468,7 +889,7 @@ app.get('/api/sync', (req, res) => {
 
 /**
  * POST /api/sketch
- * Saves a Base64 sketch image to userdata/sketches/sk_${Date.now()}.png
+ * Saves a Base64 sketch image to userdata/sketches/sk_<random>.png
  * and returns JSON { sketchUrl: '/api/sketch/sk_...' }.
  */
 app.post('/api/sketch', (req, res) => {
@@ -480,7 +901,40 @@ app.post('/api/sketch', (req, res) => {
 
     const base64Data = dataUrl.replace(/^data:image\/[a-zA-Z0-9+]+;base64,/, '');
     const buffer = Buffer.from(base64Data, 'base64');
-    const filename = `sk_${Date.now()}.png`;
+
+    // Reject over 15 MB decoded
+    const MAX_SKETCH_BYTES = 15 * 1024 * 1024;
+    if (buffer.length > MAX_SKETCH_BYTES) {
+      return res.status(413).json({ error: 'Payload too large: sketch exceeds 15 MB' });
+    }
+
+    // Magic bytes verification for PNG / JPEG / WebP
+    let imgExt = null;
+    if (
+      buffer.length >= 8 &&
+      buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47 &&
+      buffer[4] === 0x0d && buffer[5] === 0x0a && buffer[6] === 0x1a && buffer[7] === 0x0a
+    ) {
+      imgExt = 'png';
+    } else if (
+      buffer.length >= 3 &&
+      buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff
+    ) {
+      imgExt = 'jpg';
+    } else if (
+      buffer.length >= 12 &&
+      buffer.toString('ascii', 0, 4) === 'RIFF' &&
+      buffer.toString('ascii', 8, 12) === 'WEBP'
+    ) {
+      imgExt = 'webp';
+    }
+
+    if (!imgExt) {
+      return res.status(415).json({ error: 'Invalid image format: buffer magic bytes must be PNG, JPEG, or WebP' });
+    }
+
+    const randomName = crypto.randomBytes(8).toString('hex');
+    const filename = `sk_${randomName}.${imgExt}`;
     const filePath = path.join(SKETCHES_DIR, filename);
 
     fs.writeFileSync(filePath, buffer);
@@ -520,101 +974,6 @@ app.get('/api/sketch/:filename', (req, res) => {
     console.error('[API /api/sketch/:filename] Error serving sketch:', err);
     res.status(500).json({ error: `Failed to serve sketch: ${err.message}` });
   }
-});
-
-/**
- * POST /api/sketch-history
- * Saves an artist's digital sketch screenshot/photo to disk in userdata/sketches/
- * and returns the persistent local URL for visual history comparison.
- */
-app.post('/api/sketch-history', (req, res) => {
-  try {
-    const { imageId, dataUrl } = req.body || {};
-    if (!dataUrl || !imageId) {
-      return res.status(400).json({ error: 'Missing imageId or dataUrl' });
-    }
-
-    if (!fs.existsSync(SKETCHES_DIR)) {
-      fs.mkdirSync(SKETCHES_DIR, { recursive: true });
-    }
-
-    const matches = dataUrl.match(/^data:image\/([a-zA-Z0-9+]+);base64,(.+)$/);
-    if (!matches) {
-      return res.status(400).json({ error: 'Invalid data URL format' });
-    }
-
-    let ext = matches[1].toLowerCase();
-    if (ext === 'jpeg') ext = 'jpg';
-    const base64Data = matches[2];
-    const buffer = Buffer.from(base64Data, 'base64');
-
-    const safeId = String(imageId).replace(/[^a-zA-Z0-9_-]/g, '_').slice(-32);
-    const filename = `sketch_${safeId}_${Date.now()}.${ext}`;
-    const filePath = path.join(SKETCHES_DIR, filename);
-
-    fs.writeFileSync(filePath, buffer);
-
-    const sketchUrl = `/api/sketch?file=${encodeURIComponent(filename)}`;
-    res.json({
-      success: true,
-      filename,
-      sketchUrl,
-      timestamp: Date.now()
-    });
-  } catch (err) {
-    console.error('[API /api/sketch-history] Error saving sketch:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/**
- * GET /api/sketch?file=<filename>
- * Serves a saved sketch image from userdata/sketches/
- */
-app.get('/api/sketch', (req, res) => {
-  const filename = req.query.file;
-  if (!filename) {
-    return res.status(400).json({ error: 'Missing "file" query parameter' });
-  }
-
-  const safeFilename = path.basename(filename);
-  const resolved = path.join(SKETCHES_DIR, safeFilename);
-
-  if (!fs.existsSync(resolved)) {
-    return res.status(404).json({ error: 'Sketch not found' });
-  }
-
-  const ext = path.extname(resolved).toLowerCase();
-  const mimeTypes = {
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.png': 'image/png',
-    '.webp': 'image/webp'
-  };
-
-  res.setHeader('Content-Type', mimeTypes[ext] || 'image/png');
-  res.setHeader('Cache-Control', 'public, max-age=86400');
-  res.sendFile(resolved);
-});
-
-/**
- * DELETE /api/sketch?file=<filename>
- * Deletes a saved sketch attempt from disk
- */
-app.delete('/api/sketch', (req, res) => {
-  const filename = req.query.file || (req.body && req.body.file);
-  if (!filename) return res.status(400).json({ error: 'Missing "file" parameter' });
-
-  const safeFilename = path.basename(filename);
-  const resolved = path.join(SKETCHES_DIR, safeFilename);
-
-  if (fs.existsSync(resolved)) {
-    try {
-      fs.unlinkSync(resolved);
-    } catch (e) {}
-  }
-
-  res.json({ success: true });
 });
 
 // ==================== SSRF Protection & Safe Network Client ====================
@@ -773,6 +1132,11 @@ async function validateExternalUrl(urlString, options = {}) {
     return { blocked: true, reason: `Disallowed protocol "${parsed.protocol}". Only HTTP and HTTPS are permitted.` };
   }
 
+  const port = parsed.port ? parseInt(parsed.port, 10) : (protocol === 'https:' ? 443 : 80);
+  if (port !== 80 && port !== 443 && !options._allowLocalhostForTesting) {
+    return { blocked: true, reason: `Disallowed port "${port}". Outbound requests are restricted to ports 80 and 443.` };
+  }
+
   if (parsed.username || parsed.password) {
     return { blocked: true, reason: 'URLs with embedded credentials (user:pass@) are prohibited.' };
   }
@@ -911,16 +1275,25 @@ async function safeHttpRequest(initialUrl, options = {}) {
 
     const client = parsed.protocol === 'https:' ? https : http;
 
+    // Strip Referer unless host is pinimg.com (or *.pinimg.com)
+    const isPinImg = parsed.hostname === 'pinimg.com' || parsed.hostname.endsWith('.pinimg.com');
+    const reqHeaders = {
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      ...headers
+    };
+    if (!isPinImg) {
+      delete reqHeaders['Referer'];
+      delete reqHeaders['referer'];
+      delete reqHeaders['REFERER'];
+    }
+
     const reqOptions = {
       method,
       protocol: parsed.protocol,
       hostname: parsed.hostname,
       port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
       path: parsed.pathname + parsed.search,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        ...headers
-      },
+      headers: reqHeaders,
       lookup
     };
 
@@ -1063,6 +1436,13 @@ app.post('/api/download-url', async (req, res) => {
     const stat = fs.statSync(resolvedFolder);
     if (!stat.isDirectory()) {
       return res.status(400).json({ error: `Target path is not a directory: ${resolvedFolder}` });
+    }
+
+    // When APP_RUNTIME === 'electron', folderPath must be inside or equal to a registered deck folder. Otherwise 403.
+    if (process.env.APP_RUNTIME === 'electron') {
+      if (!isPathAllowedInRegisteredDecks(resolvedFolder)) {
+        return res.status(403).json({ error: 'Access denied: folderPath must be a registered deck folder' });
+      }
     }
 
     let targetImageUrl = trimmedUrl;
@@ -1236,32 +1616,6 @@ app.post('/api/download-url', async (req, res) => {
   }
 });
 
-// ==================== Electron Native Floating Mode API ====================
-let electronFloatHandler = null;
-
-function setElectronFloatHandler(handler) {
-  electronFloatHandler = handler;
-}
-
-/**
- * Endpoint to toggle or query native Electron Always-on-Top float mode.
- * In Electron, window.documentPictureInPicture is not supported by default;
- * calling this turns the studio window into a compact frameless Always-on-Top window.
- */
-app.all('/api/electron-float', (req, res) => {
-  if (typeof electronFloatHandler === 'function') {
-    try {
-      const payload = req.method === 'POST' ? req.body : req.query;
-      const result = electronFloatHandler(payload || {});
-      return res.json({ success: true, ...result });
-    } catch (err) {
-      console.error('[API /api/electron-float] Error:', err);
-      return res.status(500).json({ success: false, error: err.message });
-    }
-  }
-  return res.json({ success: false, isElectron: false, floating: false });
-});
-
 /**
  * Starts the HTTP server on the specified port.
  * Explicitly binds to loopback (127.0.0.1) for local security,
@@ -1272,6 +1626,8 @@ function startServer(port = 3000) {
   return new Promise((resolve, reject) => {
     const server = app.listen(port, '127.0.0.1', () => {
       const boundPort = server.address().port;
+      boundServerPort = boundPort;
+      app.set('port', boundPort);
       console.log(`\n  Art Practice Reference App running at:`);
       console.log(`  → http://127.0.0.1:${boundPort}`);
       console.log(`  → http://localhost:${boundPort}\n`);
@@ -1299,8 +1655,24 @@ if (require.main === module) {
 module.exports = {
   app,
   startServer,
-  setElectronFloatHandler,
   USERDATA_DIR,
   SKETCHES_DIR,
-  STATE_FILE
+  STATE_FILE,
+  BACKUPS_DIR,
+  writeStateFile,
+  safeHttpRequest,
+  validateExternalUrl,
+  ROTATION_WINDOW_MS,
+  setRotationClock,
+  resetRotationState,
+  getLocalDateString,
+  pruneDailySnapshots,
+  createDailySnapshot,
+  getBackupCandidates,
+  registerTrustedFolder,
+  clearTrustedFolders,
+  getRegisteredDeckFolders,
+  isPathAllowedInRegisteredDecks,
+  computeFileHash,
+  hashToPathMap
 };

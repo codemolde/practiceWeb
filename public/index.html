@@ -8,19 +8,11 @@
   <meta name="description"
     content="Distraction-free art practice and spaced repetition reference tool for artists, gesture sketchers, and figure studies.">
 
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'">
+
   <!-- Instant Desktop Environment Detection (macOS & Electron) -->
-  <script>
-    (function () {
-      try {
-        var isElectron = /Electron/i.test(navigator.userAgent) || window.location.search.indexOf('electron=1') !== -1;
-        var isMac = /Macintosh|Mac OS X/i.test(navigator.userAgent);
-        if (isElectron) {
-          document.documentElement.classList.add('is-electron');
-          if (isMac) document.documentElement.classList.add('is-mac');
-        }
-      } catch (e) { }
-    })();
-  </script>
+  <script src="env-detect.js"></script>
 
   <!-- Modern Typography -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1753,14 +1745,6 @@
           <input type="file" id="wallpaper-file-input" accept="image/*" class="wallpaper-file-input">
         </div>
 
-        <!-- URL / Path Option -->
-        <div class="form-group" style="margin-top: 14px;">
-          <label for="wallpaper-url-input">Or paste an Image URL / Local Path:</label>
-          <div class="input-with-button">
-            <input type="text" id="wallpaper-url-input" placeholder="https://example.com/art.jpg or local path">
-            <button type="button" id="btn-apply-wallpaper-url" class="btn btn-secondary">Apply</button>
-          </div>
-        </div>
 
         <!-- Live Controls (Blur & Dimming) -->
         <div class="wallpaper-controls-box">

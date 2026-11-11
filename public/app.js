@@ -57,6 +57,62 @@ document.querySelectorAll = function (selector) {
   return PiPState.querySelectorAll(selector) || _origQuerySelectorAll(selector);
 };
 
+// ==================== LOCAL DATE HELPER & MIGRATION NOTE ====================
+/**
+ * One-time migration note: existing stored dueDate, lastReviewDate, and review
+ * history keys stay as they are; new entries and due-date comparisons use this local date format.
+ * Formats a date to 'YYYY-MM-DD' in local time (avoiding UTC offset day-shift bugs).
+ */
+function localDateStr(date) {
+  if (date === undefined || date === null) {
+    if (arguments.length === 0) {
+      date = new Date();
+    } else {
+      return '';
+    }
+  }
+  if (typeof date === 'string') {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date)) return date;
+    date = new Date(date);
+  } else if (typeof date === 'number') {
+    date = new Date(date);
+  }
+  if (!(date instanceof Date) || isNaN(date.getTime())) {
+    return '';
+  }
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function _escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * Validates a sketch URL to prevent XSS.
+ * Allows endpoints under /api/sketch/, legacy /api/sketch?file=, or data: URLs of type PNG, JPEG, or WebP.
+ */
+function isValidSketchUrl(url) {
+  if (typeof url !== 'string' || !url) return false;
+  if (url.startsWith('/api/sketch/') || url.startsWith('/api/sketch?file=')) return true;
+  if (
+    url.startsWith('data:image/png') ||
+    url.startsWith('data:image/jpeg') ||
+    url.startsWith('data:image/webp')
+  ) {
+    return true;
+  }
+  return false;
+}
+
 // ==================== STORAGE (DISK-BACKED WITH LOCALSTORAGE MIGRATION) ====================
 const Storage = {
   DECKS_KEY: 'artpractice_decks',
@@ -73,74 +129,82 @@ const Storage = {
   _isSyncing: false,
   _lastSyncedTime: null,
   _isDiskLoaded: false,
+  _consecutiveFailures: 0,
+  _unloadListenersBound: false,
 
   /**
    * Initializes storage on app boot.
    * Loads userdata/srs_state.json from disk via GET /api/sync.
-   * If disk state does not exist yet or is empty, migrates existing localStorage data to disk!
+   * If GET /api/sync fails at startup, show a blocking banner "Could not read your saved progress" with Retry;
+   * do NOT fall back to localStorage for writing.
    */
   async init() {
-    // 1. Read existing localStorage in case we need to merge or migrate
     this._loadFromLocalStorage();
 
     try {
       const res = await fetch('/api/sync');
-      if (res.ok) {
-        const json = await res.json();
-        if (json.exists && json.data) {
-          const d = json.data;
-
-          const diskHasDecks = Array.isArray(d.decks) && d.decks.length > 0;
-          const diskHasCards = d.cards && Object.keys(d.cards).length > 0;
-          const localHasDecks = this._decks && this._decks.length > 0;
-          const localHasCards = this._cards && Object.keys(this._cards).length > 0;
-
-          // If disk has data (or both are empty), disk is the source of truth
-          if (diskHasDecks || diskHasCards || (!localHasDecks && !localHasCards)) {
-            this._decks = Array.isArray(d.decks) ? d.decks : [];
-            this._cards = d.cards && typeof d.cards === 'object' ? d.cards : {};
-            this._history = d.history && typeof d.history === 'object' ? d.history : {};
-            this._wallpaperSettings = d.wallpaperSettings || this._wallpaperSettings;
-            this._lastSyncedTime = json.lastSaved;
-            this._isDiskLoaded = true;
-
-            // Mirror to localStorage in background (safely inside try/catch)
-            this._mirrorToLocalStorage();
-            console.log('[Storage] Loaded SRS database directly from disk (userdata/srs_state.json):', {
-              decks: this._decks.length,
-              cards: Object.keys(this._cards).length
-            });
-
-            this._bindUnloadListeners();
-            return;
-          }
-        }
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
       }
+
+      const json = await res.json();
+      if (json && json.exists && json.data) {
+        const d = json.data;
+        this._decks = Array.isArray(d.decks) ? d.decks : [];
+        this._cards = d.cards && typeof d.cards === 'object' ? d.cards : {};
+        this._history = d.history && typeof d.history === 'object' ? d.history : {};
+        this._wallpaperSettings = d.wallpaperSettings || this._wallpaperSettings;
+        this._lastSyncedTime = json.lastSaved;
+        this._isDiskLoaded = true;
+        this._mirrorToLocalStorage();
+      } else {
+        // Disk state file does not exist yet (brand new install)
+        this._decks = this._decks || [];
+        this._cards = this._cards || {};
+        this._history = this._history || {};
+        this._isDiskLoaded = true;
+      }
+
+      this.hideBlockingBanner();
+      this._bindUnloadListeners();
     } catch (err) {
-      console.warn('[Storage] Could not reach /api/sync on startup, falling back to localStorage:', err.message);
+      console.error('[Storage] Could not reach /api/sync on startup:', err.message);
+      this._isDiskLoaded = false;
+      this.showBlockingBanner(err.message, () => {
+        return this.init().then(() => {
+          if (typeof DeckManager !== 'undefined' && DeckManager.init) DeckManager.init();
+          if (typeof CardManager !== 'undefined' && CardManager.init) CardManager.init();
+          if (typeof ReviewHistory !== 'undefined' && ReviewHistory.init) ReviewHistory.init();
+        }).catch(() => {});
+      });
+      // Do NOT fall back to localStorage for writing!
     }
-
-    // Disk file doesn't exist yet or is empty while localStorage has data:
-    // Migrate localStorage to disk immediately!
-    const hasData = (this._decks && this._decks.length > 0) || (this._cards && Object.keys(this._cards).length > 0);
-    if (hasData) {
-      console.log('[Storage] Migrating existing localStorage data to userdata/srs_state.json on disk...');
-      this.syncToDisk(false).catch(() => { });
-    }
-
-    this._bindUnloadListeners();
   },
 
   _bindUnloadListeners() {
-    // Flush pending changes to disk when leaving or hiding the tab
+    if (this._unloadListenersBound) return;
+    this._unloadListenersBound = true;
+
+    // keepalive: true only inside the visibilitychange/beforeunload handlers
     window.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') {
-        this.syncToDisk(false).catch(() => { });
+        this.syncToDisk({ keepalive: true }).catch(() => { });
       }
     });
     window.addEventListener('beforeunload', () => {
-      this.syncToDisk(false).catch(() => { });
+      this.syncToDisk({ keepalive: true }).catch(() => { });
     });
+
+    if (window.electronAPI && typeof window.electronAPI.onBeforeQuit === 'function') {
+      window.electronAPI.onBeforeQuit(async () => {
+        console.log('[Storage] Flushing state to disk before Electron quit...');
+        try {
+          await this.syncToDisk({ keepalive: true });
+        } catch (e) {
+          console.warn('[Storage] Flush on quit warning:', e.message);
+        }
+      });
+    }
   },
 
   _loadFromLocalStorage() {
@@ -251,8 +315,23 @@ const Storage = {
   /**
    * Writes the entire SRS database directly to userdata/srs_state.json on disk.
    * Can be awaited immediately after every practice session!
+   * - Refuses to run until _isDiskLoaded is true, unless user has no data.
+   * - keepalive: true only inside visibilitychange/beforeunload handlers. Normal syncs use plain fetch.
+   * - Stop swallowing sync errors: after 3 consecutive failures show a persistent warning chip.
    */
-  async syncToDisk(showToastNotice = false) {
+  async syncToDisk(options = false) {
+    const isOpts = typeof options === 'object' && options !== null;
+    const showToastNotice = isOpts ? Boolean(options.showToast) : Boolean(options);
+    const keepalive = isOpts ? Boolean(options.keepalive) : false;
+    const confirmReplace = isOpts ? Boolean(options.confirmReplace) : false;
+
+    // Refuse to run until _isDiskLoaded is true, unless user has no data
+    const hasData = (this._decks && this._decks.length > 0) || (this._cards && Object.keys(this._cards).length > 0);
+    if (!this._isDiskLoaded && hasData) {
+      console.warn('[Storage] Refusing syncToDisk: disk state has not finished loading yet.');
+      return;
+    }
+
     clearTimeout(this._syncTimeout);
     const payload = {
       decks: this._decks || this.getDecks(),
@@ -262,14 +341,39 @@ const Storage = {
       clientTimestamp: new Date().toISOString()
     };
 
+    if (confirmReplace || this._confirmReplaceNextSync) {
+      payload.confirmReplace = true;
+      this._confirmReplaceNextSync = false;
+    }
+
     try {
       this._isSyncing = true;
-      const res = await fetch('/api/sync', {
+      const fetchOpts = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        keepalive: true
-      });
+        body: JSON.stringify(payload)
+      };
+      if (keepalive) {
+        fetchOpts.keepalive = true;
+      }
+
+      const res = await fetch('/api/sync', fetchOpts);
+
+      if (res.status === 409) {
+        const err = await res.json().catch(() => ({}));
+        const errMsg = err.error || 'Conflict: Overwrite requires confirmation.';
+        console.error('[Storage] Sync conflict (409):', errMsg);
+
+        // Visible error on any 409, never a silent failure
+        if (typeof UI !== 'undefined' && typeof UI.showToast === 'function') {
+          UI.showToast(`Sync rejected (409): ${errMsg}`, 'alert');
+        }
+        this.showSyncWarningChip(errMsg);
+
+        const error = new Error(errMsg);
+        error.status = 409;
+        throw error;
+      }
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -279,6 +383,8 @@ const Storage = {
       const result = await res.json();
       this._lastSyncedTime = result.lastSaved;
       this._isDiskLoaded = true;
+      this._consecutiveFailures = 0;
+      this.hideSyncWarningChip();
 
       if (showToastNotice && typeof UI !== 'undefined' && UI.showToast) {
         UI.showToast('Session synced to disk (userdata/srs_state.json)', 'save');
@@ -286,8 +392,14 @@ const Storage = {
 
       return result;
     } catch (err) {
-      console.error('[Storage] Error syncing to disk:', err);
-      if (showToastNotice && typeof UI !== 'undefined' && UI.showToast) {
+      this._consecutiveFailures = (this._consecutiveFailures || 0) + 1;
+      console.error(`[Storage] Error syncing to disk (failure ${this._consecutiveFailures}):`, err);
+
+      if (this._consecutiveFailures >= 3 || err.status === 409) {
+        this.showSyncWarningChip(err.status === 409 ? err.message : undefined);
+      }
+
+      if ((showToastNotice || err.status === 409) && typeof UI !== 'undefined' && UI.showToast) {
         UI.showToast(`Disk sync issue: ${err.message}`, 'alert');
       }
       throw err;
@@ -296,8 +408,83 @@ const Storage = {
     }
   },
 
-  async syncToServer(showToastNotice = false) {
-    return this.syncToDisk(showToastNotice);
+  async syncToServer(options = false) {
+    return this.syncToDisk(options);
+  },
+
+  _esc(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  },
+
+  showBlockingBanner(message, onRetry) {
+    if (typeof document === 'undefined') return;
+    let banner = document.getElementById('storage-blocking-banner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'storage-blocking-banner';
+      banner.className = 'storage-blocking-banner';
+      banner.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(18,18,18,0.94);backdrop-filter:blur(6px);z-index:999999;display:flex;align-items:center;justify-content:center;color:#fff;padding:24px;text-align:center;';
+      document.body.appendChild(banner);
+    }
+    banner.innerHTML = `
+      <div style="background:#222;border:1px solid #444;border-radius:10px;padding:32px 36px;max-width:480px;box-shadow:0 16px 40px rgba(0,0,0,0.6);">
+        <div style="font-size:32px;margin-bottom:12px;">⚠️</div>
+        <h2 style="font-size:18px;margin:0 0 10px 0;font-weight:600;">Could not read your saved progress</h2>
+        <p style="color:#aaa;font-size:14px;margin:0 0 24px 0;line-height:1.5;">${this._esc(message) || 'The server could not read userdata/srs_state.json.'}</p>
+        <button id="btn-storage-retry" class="btn btn-primary" style="padding:10px 28px;font-size:14px;cursor:pointer;border-radius:6px;">Retry</button>
+      </div>
+    `;
+    banner.style.display = 'flex';
+    const retryBtn = document.getElementById('btn-storage-retry');
+    if (retryBtn) {
+      const handler = () => {
+        if (typeof onRetry === 'function') return onRetry();
+      };
+      retryBtn.onclick = handler;
+      retryBtn.addEventListener('click', handler);
+    }
+  },
+
+  hideBlockingBanner() {
+    if (typeof document === 'undefined') return;
+    const banner = document.getElementById('storage-blocking-banner');
+    if (banner) {
+      banner.style.display = 'none';
+      banner.remove();
+    }
+  },
+
+  showSyncWarningChip(customText) {
+    if (typeof document === 'undefined') return;
+    let chip = document.getElementById('sync-warning-chip');
+    if (!chip) {
+      chip = document.createElement('div');
+      chip.id = 'sync-warning-chip';
+      chip.className = 'sync-warning-chip';
+      chip.style.cssText = 'position:fixed;bottom:24px;right:24px;background:#ef4444;color:#fff;padding:8px 16px;border-radius:20px;font-size:13px;font-weight:600;box-shadow:0 4px 16px rgba(0,0,0,0.5);z-index:99999;display:flex;align-items:center;gap:8px;cursor:pointer;';
+      chip.title = 'Disk synchronization failed. Click to retry syncing immediately.';
+      chip.addEventListener('click', () => {
+        this.syncToDisk(true).catch(() => {});
+      });
+      document.body.appendChild(chip);
+    }
+    chip.innerHTML = `<span>⚠️ ${this._esc(customText) || 'Sync failing (click to retry)'}</span>`;
+    chip.style.display = 'flex';
+  },
+
+  hideSyncWarningChip() {
+    if (typeof document === 'undefined') return;
+    const chip = document.getElementById('sync-warning-chip');
+    if (chip) {
+      chip.style.display = 'none';
+      chip.remove();
+    }
   }
 };
 
@@ -659,6 +846,25 @@ const SoundFX = {
       osc.start(t);
       osc.stop(t + 0.09);
     });
+  },
+
+  // Short pleasant chime when adding a card
+  cardAdd() {
+    this._play((ctx, t) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(587.33, t); // D5
+      osc.frequency.exponentialRampToValueAtTime(880, t + 0.08); // A5
+
+      gain.gain.setValueAtTime(0.18, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.13);
+    });
   }
 };
 
@@ -835,11 +1041,11 @@ const ReviewHistory = {
   },
 
   /** Record one review for a deck on today's date */
-  record(deckId, isNewCard) {
+  record(deckId, isNewCard, now = new Date()) {
     if (!this.history[deckId]) {
       this.history[deckId] = {};
     }
-    const todayStr = this._dateStr(new Date());
+    const todayStr = localDateStr(now);
 
     // Migrate old flat number format to object if necessary
     if (typeof this.history[deckId][todayStr] === 'number') {
@@ -893,7 +1099,7 @@ const ReviewHistory = {
   },
 
   _dateStr(date) {
-    return date.toISOString().split('T')[0];
+    return localDateStr(date);
   }
 };
 
@@ -936,10 +1142,38 @@ const DeckManager = {
   },
 
   delete(id) {
-    this.decks = this.decks.filter(d => d.id !== id);
+    const remainingDecks = this.decks.filter(d => d.id !== id);
+    let remainingCards = 0;
+    const cards = (typeof CardManager !== 'undefined' && CardManager.cards) ? CardManager.cards : (Storage.getCards() || {});
+    for (const [dId, dCards] of Object.entries(cards)) {
+      if (dId !== id && dCards && typeof dCards === 'object') {
+        remainingCards += Object.keys(dCards).length;
+      }
+    }
+
+    const willBeEmpty = remainingDecks.length === 0 && remainingCards === 0;
+
+    if (willBeEmpty) {
+      const confirmed = (typeof window !== 'undefined' && typeof window.confirm === 'function')
+        ? window.confirm("This will remove all decks/cards")
+        : true;
+      if (!confirmed) {
+        return false;
+      }
+    }
+
+    this.decks = remainingDecks;
     this.save();
-    CardManager.deleteForDeck(id);
+    CardManager.deleteForDeck(id, { skipConfirm: true });
     ReviewHistory.deleteForDeck(id);
+
+    if (willBeEmpty && typeof Storage !== 'undefined' && typeof Storage.syncToDisk === 'function') {
+      Storage.syncToDisk({ confirmReplace: true }).catch(err => {
+        console.error('[DeckManager] Error syncing deletion to disk:', err);
+      });
+    }
+
+    return true;
   },
 
   getById(id) {
@@ -991,7 +1225,7 @@ const CardManager = {
 
     const existing = this.cards[deckId][imageId];
     const now = new Date();
-    const todayStr = this._dateStr(now);
+    const todayStr = localDateStr(now);
     const isNewCard = !existing || !existing.difficulty;
     const prevReviews = existing ? (existing.reviewCount || 0) : 0;
     const prevEase = Math.max(1.5, Math.min(3.0, existing ? (existing.easeFactor || 1.5) : 1.5));
@@ -1099,7 +1333,7 @@ const CardManager = {
       easeFactor,
       consecutiveSuccesses,
       lastStudyDuration: studyDuration || 0,
-      dueDate: interval === 0 ? todayStr : this._dateStr(dueDate),
+      dueDate: interval === 0 ? todayStr : localDateStr(dueDate),
       lapses,
       reviewCount: prevReviews + 1,
       lastReviewDate: todayStr,
@@ -1199,8 +1433,12 @@ const CardManager = {
       }
     }
 
+    if (!isValidSketchUrl(sketchUrl)) {
+      sketchUrl = '';
+    }
+
     const attemptObj = {
-      date: attempt.date || CardManager._dateStr(new Date()),
+      date: attempt.date || localDateStr(),
       rating: attempt.rating || 'medium',
       sketchUrl: sketchUrl
     };
@@ -1316,7 +1554,7 @@ const CardManager = {
     const parentId = parentImage.id || parentImage.hash || parentImage.path;
     const safeHash = String(parentImage.hash || parentId).replace(/[^a-zA-Z0-9_-]/g, '_').slice(-16);
     const childId = `crop_${safeHash}_${Date.now().toString(36)}`;
-    const todayStr = this._dateStr(new Date());
+    const todayStr = localDateStr();
 
     const cleanTags = Array.isArray(tags)
       ? tags.map(t => String(t).trim().toLowerCase().replace(/^#/, '')).filter(Boolean)
@@ -1350,25 +1588,59 @@ const CardManager = {
     return childCard;
   },
 
+  deleteCard(deckId, cardId) {
+    if (!deckId || !cardId || !this.cards[deckId]) return false;
+    const decks = (typeof DeckManager !== 'undefined' && DeckManager.decks) ? DeckManager.decks : (Storage.getDecks() || []);
+    let remainingCards = 0;
+    for (const [dId, dCards] of Object.entries(this.cards || {})) {
+      if (dCards && typeof dCards === 'object') {
+        for (const cId of Object.keys(dCards)) {
+          if (dId === deckId && cId === cardId) continue;
+          remainingCards++;
+        }
+      }
+    }
+
+    const willBeEmpty = decks.length === 0 && remainingCards === 0;
+
+    if (willBeEmpty) {
+      const confirmed = (typeof window !== 'undefined' && typeof window.confirm === 'function')
+        ? window.confirm("This will remove all decks/cards")
+        : true;
+      if (!confirmed) return false;
+    }
+
+    delete this.cards[deckId][cardId];
+    if (Object.keys(this.cards[deckId]).length === 0) {
+      delete this.cards[deckId];
+    }
+    this.save();
+
+    if (willBeEmpty && typeof Storage !== 'undefined' && typeof Storage.syncToDisk === 'function') {
+      Storage.syncToDisk({ confirmReplace: true }).catch(err => {
+        console.error('[CardManager] Error syncing deletion to disk:', err);
+      });
+    }
+    return true;
+  },
+
   deleteChildCard(deckId, childId) {
     if (!deckId || !childId || !this.cards[deckId]) return false;
     if (this.cards[deckId][childId] && this.cards[deckId][childId].isChild) {
-      delete this.cards[deckId][childId];
-      this.save();
-      return true;
+      return this.deleteCard(deckId, childId);
     }
     return false;
   },
 
   /** Calculate overdue lapse and difficulty priority score (higher = needs review first) */
-  getCardPriority(card) {
+  getCardPriority(card, now = new Date()) {
     if (!card) return 0;
-    const now = new Date();
-    const todayStr = this._dateStr(now);
+    const todayStr = localDateStr(now);
 
     let overdueDays = 0;
-    if (card.dueDate && card.dueDate < todayStr) {
-      const dueTime = new Date(card.dueDate + 'T00:00:00').getTime();
+    const cardDue = localDateStr(card.dueDate);
+    if (cardDue && cardDue < todayStr) {
+      const dueTime = new Date(cardDue + 'T00:00:00').getTime();
       const todayTime = new Date(todayStr + 'T00:00:00').getTime();
       overdueDays = Math.max(0, Math.round((todayTime - dueTime) / 86400000));
     }
@@ -1384,8 +1656,8 @@ const CardManager = {
     const deckCards = this.cards[deckId];
     if (!deckCards) return [];
 
-    const todayStr = this._dateStr(new Date());
-    let list = Object.values(deckCards).filter(c => c && c.difficulty && c.dueDate <= todayStr);
+    const todayStr = localDateStr();
+    let list = Object.values(deckCards).filter(c => c && c.difficulty && c.dueDate && localDateStr(c.dueDate) <= todayStr);
     if (tagFilter) {
       const clean = tagFilter.trim().toLowerCase().replace(/^#/, '');
       list = list.filter(c => Array.isArray(c.tags) && c.tags.includes(clean));
@@ -1409,7 +1681,7 @@ const CardManager = {
     }
 
     const deck = DeckManager.getById(deckId);
-    const todayStr = this._dateStr(new Date());
+    const todayStr = localDateStr();
 
     if (deck && deck.lastReflowDate === todayStr) {
       const currentDue = this.getDueCards(deckId, null, false).length;
@@ -1450,7 +1722,7 @@ const CardManager = {
       const dayOffset = (idx % 5) + 1; // 1, 2, 3, 4, 5, 1, 2, 3...
       const targetDate = new Date(now);
       targetDate.setDate(targetDate.getDate() + dayOffset);
-      card.dueDate = this._dateStr(targetDate);
+      card.dueDate = localDateStr(targetDate);
       card.lastReflowDate = todayStr;
     });
 
@@ -1477,13 +1749,13 @@ const CardManager = {
 
   getStats(deckId, totalImages, tagFilter = null) {
     const deckCards = this.cards[deckId] || {};
-    const todayStr = this._dateStr(new Date());
+    const todayStr = localDateStr();
 
     if (!tagFilter) {
       const childCount = Object.values(deckCards).filter(c => c && c.isChild).length;
       const effectiveTotal = totalImages + childCount;
       const reviewed = Object.values(deckCards).filter(c => c && c.difficulty).length;
-      const due = Object.values(deckCards).filter(c => c && c.difficulty && c.dueDate <= todayStr).length;
+      const due = Object.values(deckCards).filter(c => c && c.difficulty && c.dueDate && localDateStr(c.dueDate) <= todayStr).length;
       return {
         total: effectiveTotal,
         reviewed,
@@ -1495,7 +1767,7 @@ const CardManager = {
     const clean = tagFilter.trim().toLowerCase().replace(/^#/, '');
     const taggedCards = Object.values(deckCards).filter(c => Array.isArray(c.tags) && c.tags.includes(clean));
     const reviewed = taggedCards.filter(c => c && c.difficulty).length;
-    const due = taggedCards.filter(c => c && c.difficulty && c.dueDate <= todayStr).length;
+    const due = taggedCards.filter(c => c && c.difficulty && c.dueDate && localDateStr(c.dueDate) <= todayStr).length;
     const totalTagged = taggedCards.length;
 
     return {
@@ -1506,9 +1778,35 @@ const CardManager = {
     };
   },
 
-  deleteForDeck(deckId) {
+  deleteForDeck(deckId, options = {}) {
+    if (!options.skipConfirm) {
+      const decks = (typeof DeckManager !== 'undefined' && DeckManager.decks) ? DeckManager.decks : (Storage.getDecks() || []);
+      const remainingDecks = decks.filter(d => d.id !== deckId);
+      let remainingCards = 0;
+      for (const [dId, dCards] of Object.entries(this.cards || {})) {
+        if (dId !== deckId && dCards && typeof dCards === 'object') {
+          remainingCards += Object.keys(dCards).length;
+        }
+      }
+      const willBeEmpty = remainingDecks.length === 0 && remainingCards === 0;
+      if (willBeEmpty) {
+        const confirmed = (typeof window !== 'undefined' && typeof window.confirm === 'function')
+          ? window.confirm("This will remove all decks/cards")
+          : true;
+        if (!confirmed) return false;
+        delete this.cards[deckId];
+        this.save();
+        if (typeof Storage !== 'undefined' && typeof Storage.syncToDisk === 'function') {
+          Storage.syncToDisk({ confirmReplace: true }).catch(err => {
+            console.error('[CardManager] Error syncing deletion to disk:', err);
+          });
+        }
+        return true;
+      }
+    }
     delete this.cards[deckId];
     this.save();
+    return true;
   },
 
   /**
@@ -1569,7 +1867,7 @@ const CardManager = {
   },
 
   _dateStr(date) {
-    return date.toISOString().split('T')[0];
+    return localDateStr(date);
   }
 };
 
@@ -3472,10 +3770,10 @@ const SketchComparison = {
       if (attempts.length > 0) {
         attempts.forEach((att, idx) => {
           const isSelected = this.selectedAttemptIndex === idx;
-          const ratingDot = `<span class="rating-dot dot-${att.rating || 'medium'}"></span>`;
+          const ratingDot = `<span class="rating-dot dot-${UI._esc(att.rating || 'medium')}"></span>`;
           tabsHtml += `
-            <button type="button" class="btn-history-tab ${isSelected ? 'active' : ''}" data-idx="${idx}" title="${att.date} • ${att.rating}">
-              ${ratingDot} #${idx + 1} (${att.rating})
+            <button type="button" class="btn-history-tab ${isSelected ? 'active' : ''}" data-idx="${idx}" title="${UI._esc(`${att.date} • ${att.rating}`)}">
+              ${ratingDot} #${idx + 1} (${UI._esc(att.rating)})
             </button>
           `;
         });
@@ -3505,8 +3803,13 @@ const SketchComparison = {
       // Viewing past attempt
       const att = attempts[this.selectedAttemptIndex];
       if (splitSketchImg) {
-        splitSketchImg.src = att.sketchUrl;
-        splitSketchImg.classList.remove('hidden');
+        if (att && isValidSketchUrl(att.sketchUrl)) {
+          splitSketchImg.src = att.sketchUrl;
+          splitSketchImg.classList.remove('hidden');
+        } else {
+          splitSketchImg.src = '';
+          splitSketchImg.classList.add('hidden');
+        }
       }
       if (splitSketchEmpty) splitSketchEmpty.classList.add('hidden');
       if (splitTag) splitTag.textContent = `Attempt #${this.selectedAttemptIndex + 1}`;
@@ -3578,9 +3881,13 @@ const SketchComparison = {
         }
       }
 
+      if (!isValidSketchUrl(sketchUrl)) {
+        sketchUrl = '';
+      }
+
       const attempt = {
         id: 'att_' + Date.now(),
-        date: CardManager._dateStr(new Date()),
+        date: localDateStr(),
         rating,
         sketchUrl,
         timestamp: Date.now()
@@ -3966,7 +4273,7 @@ const ColorPaletteManager = {
     }
 
     container.innerHTML = this.dominantColors.map((color, idx) => `
-      <div class="palette-swatch-chip" style="background-color: ${color.hex}" data-idx="${idx}" title="${color.hex} • Value ${color.val}% • ${color.temp}">
+      <div class="palette-swatch-chip" style="background-color: ${color.hex}" data-idx="${idx}" title="${UI._esc(`${color.hex} • Value ${color.val}% • ${color.temp}`)}">
         <span class="swatch-value-tag">${color.val}%</span>
       </div>
     `).join('');
@@ -4150,7 +4457,7 @@ const ColorPaletteManager = {
     if (clearBtn) clearBtn.classList.remove('hidden');
 
     container.innerHTML = this.sampledColors.map((color, idx) => `
-      <div class="sampled-chip" style="background-color: ${color.hex}" data-idx="${idx}" title="${color.hex} • Value ${color.val}% (${color.temp})">
+      <div class="sampled-chip" style="background-color: ${color.hex}" data-idx="${idx}" title="${UI._esc(`${color.hex} • Value ${color.val}% (${color.temp})`)}">
         <span class="sampled-val">${color.val}%</span>
       </div>
     `).join('');
@@ -4191,6 +4498,7 @@ const ColorPaletteManager = {
     }).catch(() => { });
   }
 };
+
 
 // ==================== SMART CROP / FOCAL POINT ZOOM CARDS ====================
 const SmartCropManager = {
@@ -4440,7 +4748,11 @@ const SmartCropManager = {
     );
 
     if (childCard) {
-      SoundFX.cardAdd();
+      try {
+        SoundFX.cardAdd();
+      } catch (e) {
+        console.warn('[SmartCropManager] Failed to play cardAdd sound:', e);
+      }
       UI.showToast(`Created Focal Card: ${childCard.imageName}`, 'scissors');
       Storage.syncToDisk(false).catch(() => { });
     }
@@ -5095,7 +5407,7 @@ const PiPCanvasStreamer = {
 
     // Top Header: Timer Bar & Time Display
     const timerDuration = UI.getTimerDuration ? UI.getTimerDuration() : 0;
-    if (timerDuration > 0 && TimerManager.isRunning) {
+    if (timerDuration > 0 && TimerManager.isRunning()) {
       ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
       ctx.fillRect(8, 12, w - 16, 5);
 
@@ -5178,13 +5490,13 @@ const PiPCanvasStreamer = {
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
     ctx.fillStyle = '#ef4444';
-    ctx.fillText('1 Hard', pillX + 16, pillY + pillH / 2);
+    ctx.fillText('1 Again', pillX + 16, pillY + pillH / 2);
     ctx.fillStyle = '#f59e0b';
-    ctx.fillText('2 Med', pillX + 88, pillY + pillH / 2);
+    ctx.fillText('2 Hard', pillX + 92, pillY + pillH / 2);
     ctx.fillStyle = '#10b981';
-    ctx.fillText('3 Easy', pillX + 160, pillY + pillH / 2);
-    ctx.fillStyle = '#94a3b8';
-    ctx.fillText('S Skip', pillX + 242, pillY + pillH / 2);
+    ctx.fillText('3 Good', pillX + 168, pillY + pillH / 2);
+    ctx.fillStyle = '#3b82f6';
+    ctx.fillText('4 Easy', pillX + 244, pillY + pillH / 2);
   }
 };
 
@@ -5217,24 +5529,6 @@ const UI = {
       document.body.classList.add('is-electron');
       if (this.isMac) document.body.classList.add('is-mac');
       this.checkElectronFloatStatus();
-    }
-
-    if (window.electronAPI && typeof window.electronAPI.onGlobalShortcut === 'function') {
-      try {
-        window.electronAPI.onGlobalShortcut((action, data) => {
-          if (action === 'toggle-ghost-mode') {
-            this.toggleGhostMode();
-          } else if (action === 'ghost-mode-enabled') {
-            this.setGhostModeState(true);
-          } else if (action === 'ghost-mode-disabled') {
-            this.setGhostModeState(false);
-          } else if (action === 'opacity-changed' && data && typeof data.opacity === 'number') {
-            this.showOpacityHUD(data.opacity, data.isGhostMode);
-          }
-        });
-      } catch (err) {
-        console.warn('Failed to register global shortcut listener:', err);
-      }
     }
 
     await Storage.init();
@@ -5855,6 +6149,18 @@ const UI = {
 
   handleGlobalShortcutAction(action, data) {
     if (!action) return;
+    if (action === 'toggle-ghost-mode') {
+      this.toggleGhostMode();
+      return;
+    }
+    if (action === 'ghost-mode-enabled') {
+      this.setGhostModeState(true);
+      return;
+    }
+    if (action === 'ghost-mode-disabled') {
+      this.setGhostModeState(false);
+      return;
+    }
     if (action === 'opacity-changed' && data && typeof data.opacity === 'number') {
       this.showOpacityHUD(data.opacity, data.isGhostMode);
       return;
@@ -5951,8 +6257,6 @@ const UI = {
     const blurVal = document.getElementById('wallpaper-blur-val');
     const dimVal = document.getElementById('wallpaper-dim-val');
     const removeBtn = document.getElementById('btn-remove-wallpaper');
-    const urlInput = document.getElementById('wallpaper-url-input');
-    const applyUrlBtn = document.getElementById('btn-apply-wallpaper-url');
 
     document.getElementById('btn-close-wallpaper').addEventListener('click', () => modal.classList.add('hidden'));
     document.getElementById('btn-close-wallpaper-x').addEventListener('click', () => modal.classList.add('hidden'));
@@ -5997,7 +6301,7 @@ const UI = {
       }
     });
 
-    // Paste image or URL from clipboard
+    // Paste image from clipboard
     modal.addEventListener('paste', (e) => {
       const items = e.clipboardData?.items;
       if (items) {
@@ -6011,11 +6315,6 @@ const UI = {
           }
         }
       }
-      const text = e.clipboardData?.getData('text')?.trim();
-      if (text && (text.startsWith('http') || text.startsWith('/') || text.startsWith('file://'))) {
-        urlInput.value = text;
-        applyUrlBtn.click();
-      }
     });
 
     fileInput.addEventListener('change', (e) => {
@@ -6024,20 +6323,6 @@ const UI = {
       }
     });
 
-    // URL or Local File Path input
-    applyUrlBtn.addEventListener('click', () => {
-      const raw = urlInput.value.trim();
-      if (raw) {
-        let finalUrl = raw;
-        if (raw.startsWith('file://')) {
-          finalUrl = `/api/image?path=${encodeURIComponent(raw.replace(/^file:\/\//, ''))}`;
-        } else if (raw.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(raw)) {
-          finalUrl = `/api/image?path=${encodeURIComponent(raw)}`;
-        }
-        WallpaperManager.setCustomWallpaper(finalUrl);
-        urlInput.value = '';
-      }
-    });
 
     // Sliders
     blurSlider.addEventListener('input', (e) => {
@@ -6131,7 +6416,7 @@ const UI = {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `art-practice-backup-${new Date().toISOString().split('T')[0]}.json`;
+      a.download = `art-practice-backup-${localDateStr()}.json`;
       a.click();
       URL.revokeObjectURL(url);
       statusEl.textContent = 'Backup file downloaded successfully!';
@@ -6144,14 +6429,82 @@ const UI = {
       if (!file) return;
 
       const reader = new FileReader();
-      reader.onload = (evt) => {
+      reader.onload = async (evt) => {
         try {
           const data = JSON.parse(evt.target.result);
-          if (data.decks) Storage.saveDecks(data.decks);
-          if (data.cards) Storage.saveCards(data.cards);
-          if (data.history) Storage.saveHistory(data.history);
-          if (data.wallpaperSettings) Storage.saveWallpaperSettings(data.wallpaperSettings);
-          Storage.syncToDisk(false).catch(() => { });
+
+          // 1. Validate shape: decks must be array, cards must be object
+          if (!data || !Array.isArray(data.decks) || typeof data.cards !== 'object' || data.cards === null) {
+            throw new Error('Invalid backup file shape: must contain a "decks" array and a "cards" object.');
+          }
+
+          // Validate sketch URLs in backup: reject malicious schemes like javascript:, and drop invalid sketch URLs
+          for (const deckId of Object.keys(data.cards)) {
+            const deckCards = data.cards[deckId];
+            if (deckCards && typeof deckCards === 'object') {
+              for (const cardId of Object.keys(deckCards)) {
+                const card = deckCards[cardId];
+                if (card && Array.isArray(card.attempts)) {
+                  for (const att of card.attempts) {
+                    if (att && att.sketchUrl) {
+                      const sUrl = String(att.sketchUrl).trim().toLowerCase();
+                      if (sUrl.startsWith('javascript:') || sUrl.startsWith('vbscript:') || sUrl.startsWith('data:text/html')) {
+                        throw new Error('Rejected: backup contains disallowed sketchUrl scheme.');
+                      }
+                      if (!isValidSketchUrl(att.sketchUrl)) {
+                        delete att.sketchUrl;
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+
+          // 2. Count current vs incoming decks/cards and prompt confirmation
+          const currentDecks = Storage.getDecks();
+          const currentCards = Storage.getCards();
+          const currentDeckCount = currentDecks.length;
+          const currentCardCount = Object.values(currentCards).reduce((acc, d) => acc + Object.keys(d || {}).length, 0);
+
+          const incomingDeckCount = data.decks.length;
+          const incomingCardCount = Object.values(data.cards).reduce((acc, d) => acc + Object.keys(d || {}).length, 0);
+
+          const confirmMsg = `Restore backup?\n\nThis will replace your current ${currentDeckCount} deck(s) and ${currentCardCount} card(s) with ${incomingDeckCount} deck(s) and ${incomingCardCount} card(s).\n\nAre you sure you want to proceed?`;
+          const confirmed = (typeof window.confirm === 'function') ? window.confirm(confirmMsg) : true;
+          if (!confirmed) {
+            statusEl.textContent = 'Import canceled.';
+            return;
+          }
+
+          // 3. Call POST /api/sync with confirmReplace: true
+          const payload = {
+            decks: data.decks,
+            cards: data.cards,
+            history: data.history && typeof data.history === 'object' ? data.history : {},
+            wallpaperSettings: data.wallpaperSettings || null,
+            confirmReplace: true
+          };
+
+          const res = await fetch('/api/sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+
+          if (!res.ok) {
+            const errJson = await res.json().catch(() => ({}));
+            throw new Error(errJson.error || `HTTP ${res.status}`);
+          }
+
+          const syncResult = await res.json();
+          Storage._decks = data.decks;
+          Storage._cards = data.cards;
+          Storage._history = payload.history;
+          if (data.wallpaperSettings) Storage._wallpaperSettings = data.wallpaperSettings;
+          Storage._lastSyncedTime = syncResult.lastSaved;
+          Storage._isDiskLoaded = true;
+          Storage._mirrorToLocalStorage();
 
           DeckManager.init();
           CardManager.init();
@@ -6165,6 +6518,9 @@ const UI = {
           }, 1000);
         } catch (err) {
           statusEl.textContent = `Error restoring file: ${err.message}`;
+          this.showToast(`Import error: ${err.message}`, 'alert');
+        } finally {
+          fileInput.value = '';
         }
       };
       reader.readAsText(file);
@@ -6194,8 +6550,12 @@ const UI = {
 
   // ---- Keyboard Shortcuts ----
   handleKeyboard(e) {
+    if (e.metaKey || e.ctrlKey || e.altKey) {
+      return;
+    }
+
     // If typing in an input/textarea, ignore hotkeys
-    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) {
+    if (document.activeElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) {
       return;
     }
 
@@ -6495,9 +6855,14 @@ const UI = {
     // The stage just changed size — refit now and again once the browser finishes resizing
     ArtistToolbox.fitImage(false);
     requestAnimationFrame(() => ArtistToolbox.fitImage(false));
+    setTimeout(() => ArtistToolbox.fitImage(false), 200);
+    setTimeout(() => ArtistToolbox.fitImage(false), 500);
   },
 
   _enterNativeFullscreen() {
+    if (window.electronAPI && typeof window.electronAPI.setFullScreen === 'function') {
+      window.electronAPI.setFullScreen(true).catch(() => { });
+    }
     const el = document.documentElement;
     const req = el.requestFullscreen || el.webkitRequestFullscreen;
     if (!req) return; // unsupported: the CSS zen layout still gives an edge-to-edge view
@@ -6508,6 +6873,9 @@ const UI = {
   },
 
   _exitNativeFullscreen() {
+    if (window.electronAPI && typeof window.electronAPI.setFullScreen === 'function') {
+      window.electronAPI.setFullScreen(false).catch(() => { });
+    }
     if (!(document.fullscreenElement || document.webkitFullscreenElement)) return;
     const exit = document.exitFullscreen || document.webkitExitFullscreen;
     if (!exit) return;
@@ -6528,6 +6896,15 @@ const UI = {
     };
     document.addEventListener('fullscreenchange', onFullscreenChange);
     document.addEventListener('webkitfullscreenchange', onFullscreenChange);
+
+    // Sync native Electron fullscreen changes (e.g. macOS green button, Cmd+Ctrl+F, Esc)
+    if (window.electronAPI && typeof window.electronAPI.onFullscreenChange === 'function') {
+      window.electronAPI.onFullscreenChange((inFs) => {
+        if (inFs !== this.isZenMode) {
+          this.setZenMode(inFs, true);
+        }
+      });
+    }
 
     // Controls reappear on any movement/keypress and fade after a short idle
     document.addEventListener('mousemove', (e) => {
@@ -6596,6 +6973,7 @@ const UI = {
         toggleBtn.setAttribute('aria-expanded', String(isOpen));
         const label = toggleBtn.querySelector('.rating-toggle-label');
         if (label) label.textContent = isOpen ? 'Hide' : 'Rate';
+        toggleBtn.title = isOpen ? 'Hide Rating Dock' : 'Open Rating Dock [1-4]';
       }
     });
   },
@@ -6827,30 +7205,17 @@ const UI = {
       try {
         const flag = typeof targetState === 'boolean' ? targetState : !this.isGhostMode;
         const res = await window.electronAPI.toggleGhostMode(flag);
+        if (res && res.error) {
+          this.showToast(typeof res.error === 'string' ? res.error : 'Could not toggle Ghost Mode', 'alert');
+          return res;
+        }
         if (res && typeof res.isGhostMode === 'boolean') {
           this.setGhostModeState(res.isGhostMode);
-        } else {
-          this.setGhostModeState(flag);
         }
         return res;
       } catch (err) {
         console.warn('Failed to toggle ghost mode via electronAPI:', err);
-      }
-    } else if (this.isElectron) {
-      try {
-        const flag = typeof targetState === 'boolean' ? targetState : !this.isGhostMode;
-        const res = await fetch('/api/electron-float', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ghostMode: flag })
-        });
-        const data = await res.json();
-        if (data && typeof data.isGhostMode === 'boolean') {
-          this.setGhostModeState(data.isGhostMode);
-        }
-        return data;
-      } catch (err) {
-        console.warn('Failed to toggle ghost mode via /api/electron-float:', err);
+        this.showToast('Could not toggle Ghost Mode', 'alert');
       }
     }
   },
@@ -6869,60 +7234,40 @@ const UI = {
       try {
         const flag = typeof targetState === 'boolean' ? targetState : !this.isAlwaysOnTop;
         const res = await window.electronAPI.setAlwaysOnTop(flag);
+        if (res && res.error) {
+          this.showToast(typeof res.error === 'string' ? res.error : 'Could not toggle Always-on-Top', 'alert');
+          return res;
+        }
         if (res && typeof res.isAlwaysOnTop === 'boolean') {
           this.setAlwaysOnTopState(res.isAlwaysOnTop);
-        } else {
-          this.setAlwaysOnTopState(flag);
+        } else if (res && typeof res.alwaysOnTop === 'boolean') {
+          this.setAlwaysOnTopState(res.alwaysOnTop);
         }
         return res;
       } catch (err) {
         console.warn('Failed to toggle always-on-top via electronAPI:', err);
-      }
-    } else if (this.isElectron) {
-      try {
-        const flag = typeof targetState === 'boolean' ? targetState : !this.isAlwaysOnTop;
-        const res = await fetch('/api/electron-float', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ alwaysOnTop: flag })
-        });
-        const data = await res.json();
-        if (data && typeof data.isAlwaysOnTop === 'boolean') {
-          this.setAlwaysOnTopState(data.isAlwaysOnTop);
-        }
-        return data;
-      } catch (err) {
-        console.warn('Failed to toggle always-on-top via /api/electron-float:', err);
+        this.showToast('Could not toggle Always-on-Top', 'alert');
       }
     }
   },
 
   async checkElectronFloatStatus() {
-    try {
-      const res = await fetch('/api/electron-float');
-      if (!res.ok) return;
-      const data = await res.json();
-      if (data && data.isElectron) {
-        this.isElectron = true;
-        document.body.classList.add('is-electron');
-        if (this.isMac) document.body.classList.add('is-mac');
-        if (data.floating) {
-          this.setElectronFloatState(true);
-        }
-        if (typeof data.isAlwaysOnTop === 'boolean') {
-          this.setAlwaysOnTopState(data.isAlwaysOnTop);
-        }
-        if (typeof data.isGhostMode === 'boolean') {
-          this.setGhostModeState(data.isGhostMode);
-        }
-      }
-    } catch (e) { }
-
-    if (window.electronAPI && typeof window.electronAPI.isAlwaysOnTop === 'function') {
+    if (window.electronAPI && typeof window.electronAPI.getWindowState === 'function') {
       try {
-        const aot = await window.electronAPI.isAlwaysOnTop();
-        if (typeof aot === 'boolean') {
-          this.setAlwaysOnTopState(aot);
+        const data = await window.electronAPI.getWindowState();
+        if (data && data.isElectron) {
+          this.isElectron = true;
+          document.body.classList.add('is-electron');
+          if (this.isMac) document.body.classList.add('is-mac');
+          if (data.floating) {
+            this.setElectronFloatState(true);
+          }
+          if (typeof data.isAlwaysOnTop === 'boolean') {
+            this.setAlwaysOnTopState(data.isAlwaysOnTop);
+          }
+          if (typeof data.isGhostMode === 'boolean') {
+            this.setGhostModeState(data.isGhostMode);
+          }
         }
       } catch (e) { }
     }
@@ -6932,29 +7277,20 @@ const UI = {
     if (window.electronAPI && typeof window.electronAPI.toggleFloatMode === 'function') {
       try {
         const res = await window.electronAPI.toggleFloatMode(true);
-        this.setElectronFloatState(res.floating);
-        if (res.floating) {
+        if (!res || res.error) {
+          this.showToast('Could not activate Always-on-Top float mode', 'alert');
+          return;
+        }
+        const floating = typeof res.floating === 'boolean' ? res.floating : false;
+        this.setElectronFloatState(floating);
+        if (floating) {
           this.showToast('Always-on-Top Float Mode Active', 'pin');
         }
         return;
       } catch (err) {
-        console.warn('Failed to enter float mode via electronAPI, falling back to fetch:', err);
+        console.warn('Failed to enter float mode via electronAPI:', err);
+        this.showToast('Could not activate Always-on-Top float mode', 'alert');
       }
-    }
-    try {
-      const res = await fetch('/api/electron-float', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enable: true })
-      });
-      const data = await res.json();
-      this.setElectronFloatState(data.floating);
-      if (data.floating) {
-        this.showToast('Always-on-Top Float Mode Active', 'pin');
-      }
-    } catch (err) {
-      console.error('Failed to enter Electron float mode:', err);
-      this.showToast('Could not activate Always-on-Top float mode', 'alert');
     }
   },
 
@@ -6962,23 +7298,12 @@ const UI = {
     if (window.electronAPI && typeof window.electronAPI.toggleFloatMode === 'function') {
       try {
         const res = await window.electronAPI.toggleFloatMode(false);
-        this.setElectronFloatState(res.floating || false);
+        this.setElectronFloatState(res ? (res.floating || false) : false);
         return;
       } catch (err) {
-        console.warn('Failed to exit float mode via electronAPI, falling back to fetch:', err);
+        console.warn('Failed to exit float mode via electronAPI:', err);
+        this.setElectronFloatState(false);
       }
-    }
-    try {
-      const res = await fetch('/api/electron-float', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enable: false })
-      });
-      const data = await res.json();
-      this.setElectronFloatState(data.floating || false);
-    } catch (err) {
-      console.warn('Failed to exit Electron float mode:', err);
-      this.setElectronFloatState(false);
     }
   },
 
@@ -7727,7 +8052,7 @@ const UI = {
     const checkDate = new Date();
     checkDate.setHours(0, 0, 0, 0);
     for (let i = 0; i < 365; i++) {
-      const ds = this._dateToStr(checkDate);
+      const ds = localDateStr(checkDate);
       if (history[ds] && history[ds] > 0) streak++;
       else if (i !== 0) break;
       checkDate.setDate(checkDate.getDate() - 1);
@@ -7737,11 +8062,11 @@ const UI = {
 
   renderTodayStrip() {
     const allDecks = DeckManager.getAll();
-    const todayStr = CardManager._dateStr(new Date());
+    const todayStr = localDateStr();
     let totalDue = 0;
     allDecks.forEach(d => {
       const cards = CardManager.getCardsForDeck(d.id);
-      totalDue += Object.values(cards).filter(c => c.dueDate <= todayStr).length;
+      totalDue += Object.values(cards).filter(c => c && c.difficulty && c.dueDate && localDateStr(c.dueDate) <= todayStr).length;
     });
     const practiced = ReviewHistory.getGlobalHistory()[todayStr] || 0;
 
@@ -7787,7 +8112,7 @@ const UI = {
     const card = document.querySelector(`.deck-card[data-deck-id="${deck.id}"]`);
     if (!card) return;
     const meta = this.deckMeta[deck.folderPath];
-    const reviewed = Object.keys(CardManager.getCardsForDeck(deck.id)).length;
+    const reviewed = Object.values(CardManager.getCardsForDeck(deck.id)).filter(c => c && c.difficulty).length;
     const cover = card.querySelector('.deck-cover');
     const progress = card.querySelector('.deck-progress');
     if (cover) cover.innerHTML = this._deckCoverHTML(meta);
@@ -7824,12 +8149,12 @@ const UI = {
     }
 
     // Sort decks
-    const todayStr = CardManager._dateStr(new Date());
+    const todayStr = localDateStr();
     decks.sort((a, b) => {
       const cardsA = CardManager.getCardsForDeck(a.id);
       const cardsB = CardManager.getCardsForDeck(b.id);
-      const dueA = Object.values(cardsA).filter(c => c.dueDate <= todayStr).length;
-      const dueB = Object.values(cardsB).filter(c => c.dueDate <= todayStr).length;
+      const dueA = Object.values(cardsA).filter(c => c && c.difficulty && c.dueDate && localDateStr(c.dueDate) <= todayStr).length;
+      const dueB = Object.values(cardsB).filter(c => c && c.difficulty && c.dueDate && localDateStr(c.dueDate) <= todayStr).length;
 
       switch (this.deckSortOrder) {
         case 'due-desc':
@@ -7837,7 +8162,7 @@ const UI = {
         case 'name-asc':
           return a.name.localeCompare(b.name);
         case 'total-desc':
-          return Object.keys(cardsB).length - Object.keys(cardsA).length;
+          return Object.values(cardsB).filter(c => c && c.difficulty).length - Object.values(cardsA).filter(c => c && c.difficulty).length;
         case 'newest':
           return (b.createdAt || '').localeCompare(a.createdAt || '');
         default:
@@ -7855,12 +8180,12 @@ const UI = {
 
     listEl.innerHTML = decks.map(deck => {
       const deckCards = CardManager.getCardsForDeck(deck.id);
-      const reviewed = Object.keys(deckCards).length;
-      const due = Object.values(deckCards).filter(c => c.dueDate <= todayStr).length;
+      const reviewed = Object.values(deckCards).filter(c => c && c.difficulty).length;
+      const due = Object.values(deckCards).filter(c => c && c.difficulty && c.dueDate && localDateStr(c.dueDate) <= todayStr).length;
       const meta = this.deckMeta[deck.folderPath];
 
       return `
-        <div class="deck-card${due > 0 ? ' has-due' : ''}" data-deck-id="${deck.id}">
+        <div class="deck-card${due > 0 ? ' has-due' : ''}" data-deck-id="${this._esc(deck.id)}">
           <div class="deck-cover">${this._deckCoverHTML(meta)}</div>
           <div class="deck-card-body">
             <div class="deck-card-name">${this._esc(deck.name)}</div>
@@ -7977,7 +8302,7 @@ const UI = {
     const newLimit = deck.newLimit || 20;
     const reviewLimit = deck.reviewLimit || 200;
 
-    const todayStr = CardManager._dateStr(new Date());
+    const todayStr = localDateStr();
     const historyCounts = ReviewHistory.getCounts(this.currentDeckId, todayStr);
 
     const remainingNew = Math.max(0, newLimit - historyCounts.new);
@@ -8129,11 +8454,11 @@ const UI = {
     const pastData = ReviewHistory.getGlobalHistory();
     const futureData = {};
     const deckCards = CardManager.getCardsForDeck(deckId);
-    const todayStr = CardManager._dateStr(new Date());
+    const todayStr = localDateStr();
 
     Object.values(deckCards).forEach(card => {
-      if (card.dueDate > todayStr) {
-        futureData[card.dueDate] = (futureData[card.dueDate] || 0) + 1;
+      if (card && card.difficulty && card.dueDate && localDateStr(card.dueDate) > todayStr) {
+        futureData[localDateStr(card.dueDate)] = (futureData[localDateStr(card.dueDate)] || 0) + 1;
       }
     });
 
@@ -8162,7 +8487,7 @@ const UI = {
     let weekIndex = 0;
 
     while (currentDate <= endDate) {
-      const dateStr = this._dateToStr(currentDate);
+      const dateStr = localDateStr(currentDate);
       const dayOfWeek = currentDate.getDay();
 
       if (dayOfWeek === 1) {
@@ -8193,7 +8518,7 @@ const UI = {
       }
 
       cells.push(
-        `<div class="heatmap-cell ${colorClass}${isToday ? ' today' : ''}" data-tooltip="${tooltipText}"></div>`
+        `<div class="heatmap-cell ${colorClass}${isToday ? ' today' : ''}" data-tooltip="${this._esc(tooltipText)}"></div>`
       );
 
       currentDate.setDate(currentDate.getDate() + 1);
@@ -8291,15 +8616,12 @@ const UI = {
   },
 
   _dateToStr(date) {
-    const y = date.getFullYear();
-    const m = String(date.getMonth() + 1).padStart(2, '0');
-    const d = String(date.getDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
+    return localDateStr(date);
   },
 
   renderActivityStats() {
     const history = ReviewHistory.getGlobalHistory();
-    const todayStr = CardManager._dateStr(new Date());
+    const todayStr = localDateStr();
 
     const dates = Object.keys(history).filter(d => d <= todayStr).sort();
     const totalReviews = dates.reduce((sum, d) => sum + history[d], 0);
@@ -8312,7 +8634,7 @@ const UI = {
     const d30 = new Date();
     d30.setHours(0, 0, 0, 0);
     for (let i = 0; i < 30; i++) {
-      const ds = this._dateToStr(d30);
+      const ds = localDateStr(d30);
       if (history[ds] && history[ds] > 0) last30.add(ds);
       d30.setDate(d30.getDate() - 1);
     }
@@ -8326,7 +8648,7 @@ const UI = {
     checkDate.setHours(0, 0, 0, 0);
 
     for (let i = 0; i < 365; i++) {
-      const ds = this._dateToStr(checkDate);
+      const ds = localDateStr(checkDate);
       if (history[ds] && history[ds] > 0) {
         currentStreak++;
       } else {
@@ -8357,16 +8679,16 @@ const UI = {
   },
 
   renderTodaysReviewedCount() {
-    const todayStr = CardManager._dateStr(new Date());
+    const todayStr = localDateStr();
     const counts = ReviewHistory.getCounts(this.currentDeckId, todayStr);
     document.getElementById('todays-reviewed-count').textContent = counts.total;
   },
 
   // ---- Today's Reviewed Modal ----
   openTodaysReviewedModal() {
-    const todayStr = CardManager._dateStr(new Date());
+    const todayStr = localDateStr();
     const deckCards = CardManager.getCardsForDeck(this.currentDeckId);
-    const todaysCards = Object.values(deckCards).filter(c => c.lastReviewDate === todayStr);
+    const todaysCards = Object.values(deckCards).filter(c => c && c.lastReviewDate && localDateStr(c.lastReviewDate) === todayStr);
 
     const count = todaysCards.length;
     document.getElementById('todays-reviewed-summary').textContent =
@@ -8378,12 +8700,13 @@ const UI = {
     } else {
       listEl.innerHTML = todaysCards.map(card => {
         const lastAttempt = (Array.isArray(card.attempts) && card.attempts.length > 0) ? card.attempts[card.attempts.length - 1] : null;
-        const thumbHtml = lastAttempt ? `<img src="${lastAttempt.sketchUrl}" class="due-card-thumb" alt="Sketch">` : '';
+        const validSketch = (lastAttempt && isValidSketchUrl(lastAttempt.sketchUrl)) ? this._esc(lastAttempt.sketchUrl) : '';
+        const thumbHtml = validSketch ? `<img src="${validSketch}" class="due-card-thumb" alt="Sketch">` : '';
         return `
         <div class="due-card-item">
           ${thumbHtml}
           <span class="card-name" title="${this._esc(card.imageName)}">${this._esc(card.imageName)}</span>
-          <span class="card-difficulty ${card.difficulty}">${card.difficulty}</span>
+          <span class="card-difficulty ${this._esc(card.difficulty || '')}">${this._esc(card.difficulty || '')}</span>
           <span class="card-due-date">Next: ${this._formatFutureDate(card.dueDate)}</span>
         </div>
         `;
@@ -8412,7 +8735,7 @@ const UI = {
 
     const newLimit = deck.newLimit || 20;
     const reviewLimit = deck.reviewLimit || 200;
-    const todayStr = CardManager._dateStr(new Date());
+    const todayStr = localDateStr();
     const historyCounts = ReviewHistory.getCounts(this.currentDeckId, todayStr);
     const remainingNew = Math.max(0, newLimit - historyCounts.new);
     const remainingReview = Math.max(0, reviewLimit - historyCounts.review);
@@ -8488,7 +8811,7 @@ const UI = {
       frame.classList.add('is-loading');
     }
 
-    imgEl.onload = () => {
+    const handleImageLoad = () => {
       ArtistToolbox.fitImage(false);
       if (frame) {
         frame.classList.remove('is-loading');
@@ -8511,12 +8834,14 @@ const UI = {
         PlumbTool.onImageLoaded(imgEl);
       }
     };
-    imgEl.onerror = () => {
+    const handleImageError = () => {
       if (frame) frame.classList.remove('is-loading');
       this.showToast('Could not load this reference — press S to skip', 'alert');
     };
+    imgEl.addEventListener('load', handleImageLoad, { once: true });
+    imgEl.addEventListener('error', handleImageError, { once: true });
     imgEl.src = SessionManager.getImageUrl(image);
-    if (imgEl.complete && imgEl.naturalWidth > 0) imgEl.onload();
+    if (imgEl.complete && imgEl.naturalWidth > 0) handleImageLoad();
 
     // Notify SketchComparison of newly loaded reference (syncs history badges and resets current sketch)
     if (typeof SketchComparison !== 'undefined') {
@@ -8576,7 +8901,7 @@ const UI = {
     const checkDate = new Date();
     checkDate.setHours(0, 0, 0, 0);
     for (let i = 0; i < 365; i++) {
-      const ds = this._dateToStr(checkDate);
+      const ds = localDateStr(checkDate);
       if (history[ds] && history[ds] > 0) currentStreak++;
       else if (i !== 0) break;
       checkDate.setDate(checkDate.getDate() - 1);
@@ -8792,7 +9117,7 @@ const UI = {
         const iconSvg = this.getIconSvg(preset.icon || preset.id, 14, 'preset-icon-svg');
         const checkSvg = this.getIconSvg('check', 12);
         return `
-          <button type="button" class="btn-tag-preset ${isTagged ? 'active' : ''} ${preset.id === 'leech' ? 'preset-leech' : ''}" data-tag="${preset.id}">
+          <button type="button" class="btn-tag-preset ${isTagged ? 'active' : ''} ${preset.id === 'leech' ? 'preset-leech' : ''}" data-tag="${this._esc(preset.id)}">
             <span class="preset-key">${preset.key}</span>
             <span class="preset-icon">${iconSvg}</span>
             <span class="preset-label">${preset.label}</span>
@@ -9015,6 +9340,14 @@ const UI = {
       this.showToast('Deck created', 'sparkles');
     }
 
+    if (typeof Storage !== 'undefined' && typeof Storage.syncToDisk === 'function') {
+      try {
+        await Storage.syncToDisk();
+      } catch (e) {
+        console.warn('Storage sync failed:', e);
+      }
+    }
+
     this.closeDeckModal();
 
     if (editId && this.currentDeckId === editId) {
@@ -9128,7 +9461,8 @@ const UI = {
   },
 
   confirmDelete() {
-    DeckManager.delete(this.currentDeckId);
+    const res = DeckManager.delete(this.currentDeckId);
+    if (res === false) return;
     this.closeDeleteModal();
     this.showDeckList();
     this.showToast('Deck deleted', 'trash');
@@ -9136,22 +9470,24 @@ const UI = {
 
   // ---- Helpers ----
   _esc(str) {
-    if (!str) return '';
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
+    return _escapeHtml(str);
   },
 
   _formatFutureDate(dateStr) {
+    if (!dateStr) return '';
+    const normDate = localDateStr(dateStr);
+    const todayStr = localDateStr();
+    if (normDate === todayStr) return 'Today';
+
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const target = new Date(dateStr + 'T00:00:00');
+    const target = new Date(normDate + 'T00:00:00');
     const diffDays = Math.round((target - today) / (1000 * 60 * 60 * 24));
 
     if (diffDays === 0) return 'Today';
     if (diffDays === 1) return 'Tomorrow';
-    if (diffDays < 7) return `In ${diffDays} days`;
-    return dateStr;
+    if (diffDays > 1 && diffDays < 7) return `In ${diffDays} days`;
+    return normDate;
   }
 };
 
@@ -9169,6 +9505,8 @@ window.ColorPaletteManager = ColorPaletteManager;
 window.SmartCropManager = SmartCropManager;
 window.PlumbTool = PlumbTool;
 window.FloatingWindowManager = FloatingWindowManager;
+window.localDateStr = localDateStr;
+window.isValidSketchUrl = isValidSketchUrl;
 
 // ==================== INITIALIZATION ====================
 document.addEventListener('DOMContentLoaded', () => {

@@ -12,7 +12,7 @@ try {
   electronModule = null;
 }
 const isElectron = typeof electronModule === 'object' && electronModule !== null && !!electronModule.app;
-const { app, BrowserWindow, ipcMain, shell, Menu, dialog, globalShortcut, session } = isElectron ? electronModule : {};
+const { app, BrowserWindow, ipcMain, shell, Menu, dialog, globalShortcut, session, Tray, nativeImage } = isElectron ? electronModule : {};
 
 // 1. Configure OS-writable user data directory BEFORE loading server.js
 // On macOS: ~/Library/Application Support/<AppName>/userdata
@@ -66,10 +66,10 @@ function cleanStaleTempFiles(dir) {
       } else if (item.isFile() && item.name.endsWith('.tmp')) {
         try {
           fs.unlinkSync(fullPath);
-        } catch (e) {}
+        } catch (e) { }
       }
     }
-  } catch (err) {}
+  } catch (err) { }
 }
 
 /**
@@ -100,19 +100,46 @@ function copyFileAtomic(src, dest) {
 
 /**
  * Checks whether an existing destination file has valid content.
- * For srs_state.json, verifies that it is valid JSON.
- * For all other files, verifies that it has size > 0 (or matches source if source is 0).
+ * For srs_state.json: verifies valid JSON AND treats the file as REPLACEABLE (returns false)
+ * if destination has 0 decks and 0 cards while the legacy source file has more.
+ * For all other files: verifies that it has size > 0 (or matches source if source is 0).
  */
-function isDestinationFileValid(destPath, srcStat) {
+function isDestinationFileValid(destPath, srcStat, srcPath) {
   if (!fs.existsSync(destPath)) return false;
   try {
     const destStat = fs.statSync(destPath);
-    if (srcStat.size > 0 && destStat.size === 0) {
+    if (srcStat && srcStat.size > 0 && destStat.size === 0) {
       return false; // Incomplete / 0-byte file from crash
     }
-    if (path.basename(destPath) === 'srs_state.json' || destPath.endsWith('.json')) {
+    const isStateFile = path.basename(destPath) === 'srs_state.json';
+    if (isStateFile || destPath.endsWith('.json')) {
       const raw = fs.readFileSync(destPath, 'utf8');
-      JSON.parse(raw); // Verify valid JSON
+      const parsed = JSON.parse(raw); // Verify valid JSON
+
+      // Treat srs_state.json as REPLACEABLE if it has 0 decks and 0 cards while legacy has more
+      if (isStateFile && srcPath && fs.existsSync(srcPath)) {
+        const destDecks = Array.isArray(parsed?.decks) ? parsed.decks.length : (Array.isArray(parsed?.data?.decks) ? parsed.data.decks.length : 0);
+        const destCards = (parsed?.cards && typeof parsed.cards === 'object')
+          ? Object.keys(parsed.cards).length
+          : (parsed?.data?.cards && typeof parsed.data.cards === 'object' ? Object.keys(parsed.data.cards).length : 0);
+
+        if (destDecks === 0 && destCards === 0) {
+          try {
+            const srcRaw = fs.readFileSync(srcPath, 'utf8');
+            const srcParsed = JSON.parse(srcRaw);
+            const srcDecks = Array.isArray(srcParsed?.decks) ? srcParsed.decks.length : (Array.isArray(srcParsed?.data?.decks) ? srcParsed.data.decks.length : 0);
+            const srcCards = (srcParsed?.cards && typeof srcParsed.cards === 'object')
+              ? Object.keys(srcParsed.cards).length
+              : (srcParsed?.data?.cards && typeof srcParsed.data.cards === 'object' ? Object.keys(srcParsed.data.cards).length : 0);
+
+            if (srcDecks > 0 || srcCards > 0) {
+              return false; // REPLACEABLE: existing dest is empty while legacy has data
+            }
+          } catch (srcErr) {
+            // Non-fatal if src cannot be parsed
+          }
+        }
+      }
     }
     return true;
   } catch (err) {
@@ -227,12 +254,22 @@ function migrateLegacyRepoUserdata(options = {}) {
 
     // Check if destination file already exists and is valid
     if (fs.existsSync(destFilePath)) {
-      if (isDestinationFileValid(destFilePath, srcStat)) {
+      if (isDestinationFileValid(destFilePath, srcStat, entry.fullPath)) {
         // Destination already has valid data -> NEVER blindly overwrite!
         // Preserves existing SRS progress and newer destination data.
         continue;
       } else {
         logger.warn(`[Migration] Destination file "${destFilePath}" exists but is empty or invalid JSON. Re-migrating from legacy source.`);
+        // Back up the replaced file as srs_state.json.pre-migration before overwriting
+        if (path.basename(destFilePath) === 'srs_state.json') {
+          try {
+            const backupPath = path.join(path.dirname(destFilePath), 'srs_state.json.pre-migration');
+            copyFileAtomic(destFilePath, backupPath);
+            logger.log(`[Migration] Created pre-migration backup of replaced state file at: ${backupPath}`);
+          } catch (backupErr) {
+            logger.warn(`[Migration] Failed to create pre-migration backup of "${destFilePath}":`, backupErr.message);
+          }
+        }
       }
     }
 
@@ -258,7 +295,7 @@ function migrateLegacyRepoUserdata(options = {}) {
     if (!entry.isDirectory) {
       try {
         const srcStat = fs.statSync(entry.fullPath);
-        if (!isDestinationFileValid(destPath, srcStat)) {
+        if (!isDestinationFileValid(destPath, srcStat, entry.fullPath)) {
           verificationFailures.push({ relPath: entry.relPath, reason: 'Destination file corrupted or empty' });
         }
       } catch (err) {
@@ -311,12 +348,12 @@ if (isElectron) {
   migrateLegacyRepoUserdata();
 }
 
-// Load express backend startup helper and native float mode handler
-let startServer, setElectronFloatHandler;
+// Load express backend startup helper
+let startServer;
 if (isElectron) {
+  process.env.APP_RUNTIME = 'electron';
   const serverModule = require('./server.js');
   startServer = serverModule.startServer;
-  setElectronFloatHandler = serverModule.setElectronFloatHandler;
 }
 
 let mainWindow = null;
@@ -325,27 +362,96 @@ let serverPort = null;
 let isWindowFloating = false;
 let isWindowAlwaysOnTop = false;
 let isWindowGhostMode = false;
-let normalWindowBounds = null;
 
 const GHOST_MODE_OPACITY = 0.40;
-const windowGhostStates = new WeakMap();
+const windowStates = new WeakMap();
+
+/**
+ * Retrieves or initializes state for a BrowserWindow.
+ * Tracks { floating, normalBounds, alwaysOnTop, ghost, originalOpacity, ghostOpacity }.
+ * Automatically registers cleanup on the window's 'closed' event.
+ */
+function getState(win) {
+  if (!win) {
+    return {
+      floating: false,
+      normalBounds: null,
+      alwaysOnTop: false,
+      ghost: false,
+      originalOpacity: 1.0,
+      ghostOpacity: GHOST_MODE_OPACITY,
+      get isGhostMode() { return this.ghost; },
+      set isGhostMode(v) { this.ghost = v; }
+    };
+  }
+  let state = windowStates.get(win);
+  if (!state) {
+    // If the window has already been destroyed, do NOT invoke native methods (e.g. getOpacity, isAlwaysOnTop)
+    const isDestroyed = typeof win.isDestroyed === 'function' ? win.isDestroyed() : false;
+    if (isDestroyed) {
+      return {
+        floating: false,
+        normalBounds: null,
+        alwaysOnTop: false,
+        ghost: false,
+        originalOpacity: 1.0,
+        ghostOpacity: GHOST_MODE_OPACITY,
+        ghostTimer: null,
+        keepGhost: false,
+        restoreOnBlur: false,
+        get isGhostMode() { return this.ghost; },
+        set isGhostMode(v) { this.ghost = v; }
+      };
+    }
+
+    let currentOpacity = 1.0;
+    try {
+      if (typeof win.getOpacity === 'function') {
+        currentOpacity = win.getOpacity();
+      }
+    } catch (e) {
+      currentOpacity = 1.0;
+    }
+
+    let isAot = false;
+    try {
+      if (typeof win.isAlwaysOnTop === 'function') {
+        isAot = win.isAlwaysOnTop();
+      }
+    } catch (e) {
+      isAot = false;
+    }
+
+    state = {
+      floating: false,
+      normalBounds: null,
+      alwaysOnTop: Boolean(isAot),
+      ghost: false,
+      originalOpacity: (typeof currentOpacity === 'number' && currentOpacity > 0) ? currentOpacity : 1.0,
+      ghostOpacity: GHOST_MODE_OPACITY,
+      ghostTimer: null,
+      keepGhost: false,
+      restoreOnBlur: false,
+      get isGhostMode() { return this.ghost; },
+      set isGhostMode(v) { this.ghost = v; }
+    };
+    windowStates.set(win, state);
+    if (typeof win.once === 'function') {
+      win.once('closed', () => {
+        clearGhostAutoRestoreTimer(win);
+        windowStates.delete(win);
+      });
+    }
+  }
+  return state;
+}
 
 /**
  * Retrieve or initialize independent Ghost Mode state for a BrowserWindow.
- * Tracks isGhostMode and preserves original opacity for reliable restoration.
+ * Backward-compatible helper routing through getState(win).
  */
 function getWindowGhostState(win) {
-  if (!win) return { isGhostMode: false, originalOpacity: 1.0 };
-  let state = windowGhostStates.get(win);
-  if (!state) {
-    const currentOpacity = (typeof win.getOpacity === 'function') ? win.getOpacity() : 1.0;
-    state = {
-      isGhostMode: false,
-      originalOpacity: (typeof currentOpacity === 'number' && currentOpacity > 0) ? currentOpacity : 1.0
-    };
-    windowGhostStates.set(win, state);
-  }
-  return state;
+  return getState(win);
 }
 
 /**
@@ -379,28 +485,35 @@ function setFloatingMode(win, enabled = true) {
 function setAlwaysOnTopMode(win, targetState) {
   const targetWin = win || mainWindow;
   if (!targetWin || targetWin.isDestroyed()) {
+    const s = getState(targetWin);
     return {
       isElectron: true,
       isAlwaysOnTop: false,
-      floating: isWindowFloating
+      floating: s.floating
     };
   }
+
+  const state = getState(targetWin);
 
   // Handle boolean or toggle if undefined/non-boolean
   const shouldBeOnTop = typeof targetState === 'boolean'
     ? targetState
-    : !targetWin.isAlwaysOnTop();
+    : !state.alwaysOnTop;
 
-  isWindowAlwaysOnTop = shouldBeOnTop;
+  state.alwaysOnTop = shouldBeOnTop;
 
   // Stacking level only: do NOT modify bounds, position, min size, buttons, or fullscreenable
-  targetWin.setAlwaysOnTop(shouldBeOnTop, 'floating');
+  if (!state.floating && !state.ghost) {
+    targetWin.setAlwaysOnTop(shouldBeOnTop, 'floating');
+  }
 
-  // Synchronize menu item checkbox if present
-  try {
-    const aotMenuItem = Menu.getApplicationMenu()?.getMenuItemById('menu-always-on-top');
-    if (aotMenuItem) aotMenuItem.checked = shouldBeOnTop;
-  } catch (e) { }
+  // Synchronize menu item checkbox if present (for mainWindow only)
+  if (targetWin === mainWindow) {
+    try {
+      const aotMenuItem = Menu?.getApplicationMenu?.()?.getMenuItemById('menu-always-on-top');
+      if (aotMenuItem) aotMenuItem.checked = shouldBeOnTop;
+    } catch (e) { }
+  }
 
   // Inform renderer webContents
   if (targetWin.webContents && !targetWin.webContents.isDestroyed()) {
@@ -414,7 +527,7 @@ function setAlwaysOnTopMode(win, targetState) {
   return {
     isElectron: true,
     isAlwaysOnTop: shouldBeOnTop,
-    floating: isWindowFloating
+    floating: state.floating
   };
 }
 
@@ -425,31 +538,39 @@ function setAlwaysOnTopMode(win, targetState) {
 function toggleFloatMode(win, targetState) {
   const targetWin = win || mainWindow;
   if (!targetWin || targetWin.isDestroyed()) {
+    const s = getState(targetWin);
     return {
       isElectron: true,
       floating: false,
-      isAlwaysOnTop: isWindowAlwaysOnTop
+      isAlwaysOnTop: s.alwaysOnTop
     };
   }
 
-  const shouldFloat = typeof targetState === 'boolean' ? targetState : !isWindowFloating;
+  const state = getState(targetWin);
+  const shouldFloat = typeof targetState === 'boolean' ? targetState : !state.floating;
 
   if (shouldFloat) {
-    if (!isWindowFloating) {
-      normalWindowBounds = targetWin.getBounds();
+    if (!state.floating) {
+      state.normalBounds = targetWin.getBounds();
     }
 
     setFloatingMode(targetWin, true);
 
-    const { screen } = require('electron');
-    const display = screen.getDisplayMatching(targetWin.getBounds());
-    const workArea = display.workArea;
+    let workArea = { x: 0, y: 0, width: 1920, height: 1080 };
+    try {
+      const electronObj = require('electron');
+      const scr = (typeof electronObj === 'object' && electronObj?.screen) ? electronObj.screen : null;
+      if (scr && typeof scr.getDisplayMatching === 'function') {
+        const display = scr.getDisplayMatching(targetWin.getBounds());
+        if (display && display.workArea) workArea = display.workArea;
+      }
+    } catch (e) { }
 
     const compactWidth = 480;
     const compactHeight = 620;
 
-    const posX = Math.max(workArea.x + 20, Math.min(workArea.x + workArea.width - compactWidth - 20, (normalWindowBounds ? normalWindowBounds.x + normalWindowBounds.width - compactWidth : workArea.x + workArea.width - compactWidth - 30)));
-    const posY = Math.max(workArea.y + 20, Math.min(workArea.y + workArea.height - compactHeight - 20, (normalWindowBounds ? normalWindowBounds.y : workArea.y + 40)));
+    const posX = Math.max(workArea.x + 20, Math.min(workArea.x + workArea.width - compactWidth - 20, (state.normalBounds ? state.normalBounds.x + state.normalBounds.width - compactWidth : workArea.x + workArea.width - compactWidth - 30)));
+    const posY = Math.max(workArea.y + 20, Math.min(workArea.y + workArea.height - compactHeight - 20, (state.normalBounds ? state.normalBounds.y : workArea.y + 40)));
 
     targetWin.setMinimumSize(240, 220);
     targetWin.setBounds({
@@ -463,10 +584,10 @@ function toggleFloatMode(win, targetState) {
       targetWin.setWindowButtonVisibility(false);
     }
 
-    isWindowFloating = true;
+    state.floating = true;
   } else {
     // If independent always-on-top was explicitly enabled, preserve always-on-top stacking
-    if (isWindowAlwaysOnTop) {
+    if (state.alwaysOnTop) {
       if (process.platform === 'darwin') {
         targetWin.setVisibleOnAllWorkspaces(false);
         targetWin.setFullScreenable(true);
@@ -481,36 +602,281 @@ function toggleFloatMode(win, targetState) {
     }
 
     targetWin.setMinimumSize(320, 280);
-    if (normalWindowBounds) {
-      targetWin.setBounds(normalWindowBounds, true);
+    if (state.normalBounds) {
+      targetWin.setBounds(state.normalBounds, true);
     } else {
       targetWin.setSize(1280, 820, true);
       targetWin.center();
     }
 
-    isWindowFloating = false;
+    state.floating = false;
   }
 
-  // Synchronize menu item checkbox if present
-  try {
-    const floatMenuItem = Menu.getApplicationMenu()?.getMenuItemById('menu-float-mode');
-    if (floatMenuItem) floatMenuItem.checked = isWindowFloating;
-  } catch (e) { }
+  // Synchronize menu item checkbox if present (for mainWindow only)
+  if (targetWin === mainWindow) {
+    try {
+      const floatMenuItem = Menu?.getApplicationMenu?.()?.getMenuItemById('menu-float-mode');
+      if (floatMenuItem) floatMenuItem.checked = state.floating;
+    } catch (e) { }
+  }
 
   // Inform renderer webContents
   if (targetWin.webContents && !targetWin.webContents.isDestroyed()) {
     targetWin.webContents.executeJavaScript(`
       if (window.UI && typeof window.UI.setElectronFloatState === 'function') {
-        window.UI.setElectronFloatState(${isWindowFloating});
+        window.UI.setElectronFloatState(${state.floating});
       }
     `).catch(() => { });
   }
 
   return {
     isElectron: true,
-    floating: isWindowFloating,
+    floating: state.floating,
     isAlwaysOnTop: targetWin.isAlwaysOnTop()
   };
+}
+
+/**
+ * Sets or exits native OS fullscreen for a window.
+ * Ensures macOS fullScreenable capability is restored if previously disabled by floating mode.
+ */
+function setWindowFullScreen(win, flag) {
+  const targetWin = win || mainWindow;
+  if (!targetWin || targetWin.isDestroyed()) {
+    return { success: false, isFullScreen: false };
+  }
+
+  const shouldBeFullScreen = Boolean(flag);
+
+  // If entering fullscreen while floating mode is active, disable float mode first
+  const state = getState(targetWin);
+  if (shouldBeFullScreen && state.floating) {
+    toggleFloatMode(targetWin, false);
+  }
+
+  if (process.platform === 'darwin' && typeof targetWin.setFullScreenable === 'function') {
+    targetWin.setFullScreenable(true);
+  }
+
+  if (typeof targetWin.setFullScreen === 'function') {
+    targetWin.setFullScreen(shouldBeFullScreen);
+  }
+
+  const isFs = typeof targetWin.isFullScreen === 'function' ? targetWin.isFullScreen() : shouldBeFullScreen;
+  return { success: true, isFullScreen: isFs };
+}
+
+function toggleWindowFullScreen(win) {
+  const targetWin = win || mainWindow;
+  if (!targetWin || targetWin.isDestroyed()) {
+    return { success: false, isFullScreen: false };
+  }
+  const current = typeof targetWin.isFullScreen === 'function' ? targetWin.isFullScreen() : false;
+  return setWindowFullScreen(targetWin, !current);
+}
+
+/**
+ * Safely sets window opacity with platform capability check.
+ * Reports warning and falls back safely if setOpacity is not available.
+ */
+function safeSetOpacity(win, opacity) {
+  if (!win || win.isDestroyed()) return false;
+  if (typeof win.setOpacity !== 'function') {
+    console.warn('[Electron] setOpacity is unavailable on this platform or window.');
+    return false;
+  }
+  try {
+    win.setOpacity(opacity);
+    return true;
+  } catch (err) {
+    console.warn('[Electron] Error calling setOpacity:', err.message);
+    return false;
+  }
+}
+
+let appTray = null;
+
+function setupTray() {
+  if (!isElectron || !Tray) return;
+  if (appTray) return;
+  try {
+    let icon = null;
+    if (nativeImage && typeof nativeImage.createFromBuffer === 'function') {
+      const transparentPng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+      icon = nativeImage.createFromBuffer(transparentPng);
+    } else if (nativeImage && typeof nativeImage.createEmpty === 'function') {
+      icon = nativeImage.createEmpty();
+    }
+    if (!icon) return;
+
+    appTray = new Tray(icon);
+    appTray.setToolTip('Art Practice Reference Studio');
+    updateTrayMenu();
+  } catch (err) {
+    console.warn('[Electron] Failed to initialize tray:', err.message);
+  }
+}
+
+function updateTrayMenu() {
+  if (!appTray) return;
+  try {
+    const isGhost = mainWindow && !mainWindow.isDestroyed() ? Boolean(getState(mainWindow).ghost) : false;
+    const contextMenu = Menu.buildFromTemplate([
+      {
+        id: 'tray-exit-ghost-mode',
+        label: 'Exit Ghost Mode',
+        enabled: isGhost,
+        click: () => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            toggleGhostMode(mainWindow, false);
+          }
+        }
+      },
+      { type: 'separator' },
+      {
+        label: 'Quit Studio',
+        click: () => {
+          if (app && typeof app.quit === 'function') {
+            app.quit();
+          }
+        }
+      }
+    ]);
+    appTray.setContextMenu(contextMenu);
+  } catch (err) {
+    console.warn('[Electron] Failed to update tray menu:', err.message);
+  }
+}
+
+const GHOST_OPACITY_SHORTCUTS = [
+  { key: 'CmdOrCtrl+Shift+Up', handler: () => mainWindow && !mainWindow.isDestroyed() && adjustWindowOpacity(mainWindow, 0.10) },
+  { key: 'CmdOrCtrl+Shift+Down', handler: () => mainWindow && !mainWindow.isDestroyed() && adjustWindowOpacity(mainWindow, -0.10) },
+  { key: 'CmdOrCtrl+Shift+]', handler: () => mainWindow && !mainWindow.isDestroyed() && adjustWindowOpacity(mainWindow, 0.10) },
+  { key: 'CmdOrCtrl+Shift+[', handler: () => mainWindow && !mainWindow.isDestroyed() && adjustWindowOpacity(mainWindow, -0.10) },
+  { key: 'CmdOrCtrl+Shift+O', handler: () => mainWindow && !mainWindow.isDestroyed() && cycleWindowOpacity(mainWindow) },
+  { key: 'CmdOrCtrl+Shift+K', handler: () => mainWindow && !mainWindow.isDestroyed() && keepGhostMode(mainWindow) }
+];
+
+let ghostShortcutsRegistered = false;
+
+function registerGhostModeShortcuts() {
+  if (!globalShortcut || typeof globalShortcut.register !== 'function') return;
+  if (ghostShortcutsRegistered) return;
+  for (const { key, handler } of GHOST_OPACITY_SHORTCUTS) {
+    try {
+      globalShortcut.register(key, handler);
+    } catch (err) {
+      console.warn(`[Electron] Failed to register ghost shortcut ${key}:`, err.message);
+    }
+  }
+  ghostShortcutsRegistered = true;
+}
+
+function unregisterGhostModeShortcuts() {
+  if (!globalShortcut || typeof globalShortcut.unregister !== 'function') return;
+  if (!ghostShortcutsRegistered) return;
+  for (const { key } of GHOST_OPACITY_SHORTCUTS) {
+    try {
+      globalShortcut.unregister(key);
+    } catch (err) {
+      console.warn(`[Electron] Failed to unregister ghost shortcut ${key}:`, err.message);
+    }
+  }
+  ghostShortcutsRegistered = false;
+}
+
+function startGhostAutoRestoreTimer(win) {
+  const state = getState(win);
+  clearGhostAutoRestoreTimer(win);
+  state.keepGhost = false;
+
+  state.ghostTimer = setTimeout(() => {
+    if (win && !win.isDestroyed() && state.ghost && !state.keepGhost) {
+      console.warn('[Electron] Ghost Mode 60s failsafe auto-restored mouse interaction.');
+      try {
+        win.setIgnoreMouseEvents(false);
+      } catch (e) { }
+      if (win.webContents && !win.webContents.isDestroyed()) {
+        win.webContents.send('shortcut:action', 'ghost-mouse-restored');
+        win.webContents.executeJavaScript(`
+          if (window.UI && typeof window.UI.showToast === 'function') {
+            window.UI.showToast('Mouse interaction auto-restored (60s failsafe)', 'info');
+          }
+        `).catch(() => { });
+      }
+    }
+  }, 60000);
+}
+
+function clearGhostAutoRestoreTimer(win) {
+  if (!win) return;
+  const state = windowStates.get(win);
+  if (state && state.ghostTimer) {
+    clearTimeout(state.ghostTimer);
+    state.ghostTimer = null;
+  }
+}
+
+function keepGhostMode(win) {
+  const targetWin = win || mainWindow;
+  if (!targetWin || targetWin.isDestroyed()) return { success: false };
+  const state = getState(targetWin);
+  if (!state.ghost) return { success: false, isGhostMode: false };
+
+  state.keepGhost = true;
+  clearGhostAutoRestoreTimer(targetWin);
+
+  if (targetWin.webContents && !targetWin.webContents.isDestroyed()) {
+    targetWin.webContents.send('shortcut:action', 'keep-ghost-activated');
+    targetWin.webContents.executeJavaScript(`
+      if (window.UI && typeof window.UI.showToast === 'function') {
+        window.UI.showToast('Ghost Mode timer disarmed (staying in Ghost Mode) [Cmd+Shift+K]', 'check');
+      }
+    `).catch(() => { });
+  }
+  return { success: true, isGhostMode: true, keepGhost: true };
+}
+
+let globalRestoreGhostOnBlur = false;
+
+/**
+ * Configure opt-in failsafe: exit Ghost Mode / restore mouse interaction on window blur (focus loss).
+ * When disabled (default): mouse click-through remains active across focus loss (e.g. while drawing
+ * in Photoshop or Blender underneath), relying on the 60s auto-restore timer, Tray icon, and Cmd+Shift+G.
+ * When enabled (opt-in): losing focus immediately restores mouse interaction and exits Ghost Mode.
+ */
+function setRestoreGhostOnBlur(enabled, win) {
+  const bool = Boolean(enabled);
+  globalRestoreGhostOnBlur = bool;
+  if (win && !win.isDestroyed()) {
+    getState(win).restoreOnBlur = bool;
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    getState(mainWindow).restoreOnBlur = bool;
+  }
+  try {
+    const item = Menu?.getApplicationMenu?.()?.getMenuItemById('menu-ghost-restore-on-blur');
+    if (item) item.checked = bool;
+  } catch (e) { }
+  return { isElectron: true, restoreGhostOnBlur: bool };
+}
+
+function getRestoreGhostOnBlur(win) {
+  if (win && !win.isDestroyed()) {
+    const s = getState(win);
+    if (typeof s.restoreOnBlur === 'boolean') return s.restoreOnBlur;
+  }
+  return globalRestoreGhostOnBlur;
+}
+
+function handleWindowBlur(win) {
+  if (!win || win.isDestroyed()) return;
+  const state = getState(win);
+  const shouldRestore = Boolean(state.restoreOnBlur || globalRestoreGhostOnBlur);
+  if (state.ghost && shouldRestore && !state.keepGhost) {
+    console.info('[Electron] Window focus lost with restoreGhostOnBlur enabled: exiting Ghost Mode');
+    toggleGhostMode(win, false);
+  }
 }
 
 /**
@@ -523,36 +889,44 @@ function setWindowOpacity(win, targetOpacity) {
   if (!targetWin || targetWin.isDestroyed()) return;
 
   const opacity = Math.max(0.10, Math.min(1.00, Math.round(targetOpacity * 100) / 100));
+  const supported = safeSetOpacity(targetWin, opacity);
 
-  if (typeof targetWin.setOpacity === 'function') {
-    targetWin.setOpacity(opacity);
+  const state = getState(targetWin);
+  if (state.ghost) {
+    state.ghostOpacity = opacity;
+  } else {
+    state.originalOpacity = opacity;
   }
 
-  const ghostState = getWindowGhostState(targetWin);
-  if (ghostState.isGhostMode) {
-    ghostState.ghostOpacity = opacity;
-  } else {
-    ghostState.originalOpacity = opacity;
+  if (!supported) {
+    if (targetWin.webContents && !targetWin.webContents.isDestroyed()) {
+      targetWin.webContents.executeJavaScript(`
+        if (window.UI && typeof window.UI.showToast === 'function') {
+          window.UI.showToast('Window opacity is unavailable on this platform.', 'alert');
+        }
+      `).catch(() => { });
+    }
   }
 
   // Inform renderer to display the transient, auto-hiding Opacity HUD
   if (targetWin.webContents && !targetWin.webContents.isDestroyed()) {
     targetWin.webContents.executeJavaScript(`
       if (window.UI && typeof window.UI.showOpacityHUD === 'function') {
-        window.UI.showOpacityHUD(${opacity}, ${ghostState.isGhostMode});
+        window.UI.showOpacityHUD(${opacity}, ${state.ghost});
       }
     `).catch(() => { });
 
     targetWin.webContents.send('shortcut:action', 'opacity-changed', {
       opacity,
-      isGhostMode: ghostState.isGhostMode
+      isGhostMode: state.ghost
     });
   }
 
   return {
     isElectron: true,
     opacity,
-    isGhostMode: ghostState.isGhostMode
+    isGhostMode: state.ghost,
+    opacitySupported: supported
   };
 }
 
@@ -599,75 +973,90 @@ function cycleWindowOpacity(win) {
 function toggleGhostMode(win, targetState) {
   const targetWin = win || mainWindow;
   if (!targetWin || targetWin.isDestroyed()) {
+    const s = getState(targetWin);
     return {
       isElectron: true,
       isGhostMode: false,
-      isAlwaysOnTop: isWindowAlwaysOnTop,
-      floating: isWindowFloating,
+      isAlwaysOnTop: s.alwaysOnTop,
+      floating: s.floating,
       error: 'Window not found'
     };
   }
 
   try {
-    const ghostState = getWindowGhostState(targetWin);
+    const state = getState(targetWin);
     const shouldGhost = typeof targetState === 'boolean'
       ? targetState
-      : !ghostState.isGhostMode;
+      : !state.ghost;
+
+    const isLinux = process.platform === 'linux';
 
     if (shouldGhost) {
       // 1. Capture original opacity only when transitioning from non-ghost mode
       // (prevents repeated toggles from overwriting saved original opacity)
-      if (!ghostState.isGhostMode) {
+      if (!state.ghost) {
         const currentOpacity = typeof targetWin.getOpacity === 'function' ? targetWin.getOpacity() : 1.0;
-        ghostState.originalOpacity = (typeof currentOpacity === 'number' && currentOpacity > 0)
+        state.originalOpacity = (typeof currentOpacity === 'number' && currentOpacity > 0)
           ? currentOpacity
           : 1.0;
-        ghostState.isGhostMode = true;
+        state.ghost = true;
       }
 
-      // 2. Set translucent opacity (~40% or user preference)
-      const targetGhostOpacity = (typeof ghostState.ghostOpacity === 'number' && ghostState.ghostOpacity > 0)
-        ? ghostState.ghostOpacity
+      // 2. Set translucent opacity (~40% or user preference) safely
+      const targetGhostOpacity = (typeof state.ghostOpacity === 'number' && state.ghostOpacity > 0)
+        ? state.ghostOpacity
         : GHOST_MODE_OPACITY;
-      if (typeof targetWin.setOpacity === 'function') {
-        targetWin.setOpacity(targetGhostOpacity);
-      }
+      safeSetOpacity(targetWin, targetGhostOpacity);
 
       // 3. Ensure window is always on top while in ghost mode so it remains visible above drawing app
       targetWin.setAlwaysOnTop(true, 'floating');
 
-      // 4. Pass mouse clicks through, but forward moves to allow hover-exit
-      targetWin.setIgnoreMouseEvents(true, { forward: true });
+      // 4. Pass mouse clicks through, but forward moves to allow hover-exit (not supported on Linux)
+      if (!isLinux) {
+        targetWin.setIgnoreMouseEvents(true, { forward: true });
+        startGhostAutoRestoreTimer(targetWin);
+      } else {
+        console.info('[Electron] Linux detected: ghost mode uses opacity only (click-through disabled).');
+      }
+
+      // 5. Register opacity shortcuts while ghost mode is active on mainWindow
+      if (targetWin === mainWindow) {
+        registerGhostModeShortcuts();
+      }
     } else {
       // 1. Restore original opacity safely
-      const restoreOpacity = (typeof ghostState.originalOpacity === 'number' && ghostState.originalOpacity > 0)
-        ? ghostState.originalOpacity
+      const restoreOpacity = (typeof state.originalOpacity === 'number' && state.originalOpacity > 0)
+        ? state.originalOpacity
         : 1.0;
-      if (typeof targetWin.setOpacity === 'function') {
-        targetWin.setOpacity(restoreOpacity);
-      }
-      ghostState.isGhostMode = false;
+      safeSetOpacity(targetWin, restoreOpacity);
+      state.ghost = false;
 
-      // 2. Restore normal mouse interaction
+      // 2. Restore normal mouse interaction & clear timer
       targetWin.setIgnoreMouseEvents(false);
+      clearGhostAutoRestoreTimer(targetWin);
+      state.keepGhost = false;
 
-      // 3. Restore always-on-top state to prior state
-      if (isWindowAlwaysOnTop || isWindowFloating) {
+      // 3. Unregister ghost opacity shortcuts when ghost mode ends on mainWindow
+      if (targetWin === mainWindow) {
+        unregisterGhostModeShortcuts();
+      }
+
+      // 4. Restore always-on-top state to prior state
+      if (state.alwaysOnTop || state.floating) {
         targetWin.setAlwaysOnTop(true, 'floating');
       } else {
         targetWin.setAlwaysOnTop(false);
       }
     }
 
+    // Synchronize menu item checkbox if present (for mainWindow only)
     if (targetWin === mainWindow) {
-      isWindowGhostMode = shouldGhost;
+      try {
+        const ghostMenuItem = Menu?.getApplicationMenu?.()?.getMenuItemById('menu-ghost-mode');
+        if (ghostMenuItem) ghostMenuItem.checked = state.ghost;
+      } catch (e) { }
+      updateTrayMenu();
     }
-
-    // Synchronize menu item checkbox if present
-    try {
-      const ghostMenuItem = Menu.getApplicationMenu()?.getMenuItemById('menu-ghost-mode');
-      if (ghostMenuItem) ghostMenuItem.checked = shouldGhost;
-    } catch (e) { }
 
     // Inform renderer webContents
     if (targetWin.webContents && !targetWin.webContents.isDestroyed()) {
@@ -675,56 +1064,41 @@ function toggleGhostMode(win, targetState) {
         if (window.UI && typeof window.UI.setGhostModeState === 'function') {
           window.UI.setGhostModeState(${shouldGhost});
         }
+        if (${shouldGhost} && ${isLinux}) {
+          if (window.UI && typeof window.UI.showToast === 'function') {
+            window.UI.showToast('Ghost Mode active (translucent opacity only; click-through is not supported on Linux)', 'ghost');
+          }
+        }
       `).catch(() => { });
 
-      targetWin.webContents.send('shortcut:action', shouldGhost ? 'ghost-mode-enabled' : 'ghost-mode-disabled');
+      targetWin.webContents.send('shortcut:action', shouldGhost ? 'ghost-mode-enabled' : 'ghost-mode-disabled', {
+        isLinux,
+        clickThrough: !isLinux && shouldGhost
+      });
     }
 
     return {
       isElectron: true,
       isGhostMode: shouldGhost,
       isAlwaysOnTop: targetWin.isAlwaysOnTop(),
-      floating: isWindowFloating,
+      floating: state.floating,
+      isLinux,
+      clickThrough: !isLinux && shouldGhost,
       opacity: typeof targetWin.getOpacity === 'function' ? targetWin.getOpacity() : (shouldGhost ? GHOST_MODE_OPACITY : 1.0)
     };
   } catch (err) {
     console.error('[Electron] Error in toggleGhostMode:', err);
+    const s = getState(targetWin);
     return {
       isElectron: true,
       isGhostMode: false,
       isAlwaysOnTop: targetWin.isAlwaysOnTop(),
-      floating: isWindowFloating,
+      floating: s.floating,
       error: err.message
     };
   }
 }
 
-// Register float handler with Express backend for /api/electron-float
-if (isElectron && typeof setElectronFloatHandler === 'function') {
-  setElectronFloatHandler((data) => {
-    const currentAot = mainWindow && !mainWindow.isDestroyed() ? mainWindow.isAlwaysOnTop() : isWindowAlwaysOnTop;
-    if (data && (data.query === true || data.check === true)) {
-      return { isElectron: true, floating: isWindowFloating, isAlwaysOnTop: currentAot, isGhostMode: isWindowGhostMode };
-    }
-    if (data && typeof data.ghostMode === 'boolean') {
-      return toggleGhostMode(mainWindow, data.ghostMode);
-    }
-    if (data && typeof data.alwaysOnTop === 'boolean') {
-      return setAlwaysOnTopMode(mainWindow, data.alwaysOnTop);
-    }
-    if (data && typeof data.opacity === 'number') {
-      return setWindowOpacity(mainWindow, data.opacity);
-    }
-    if (data && typeof data.opacityDelta === 'number') {
-      return adjustWindowOpacity(mainWindow, data.opacityDelta);
-    }
-    if (data && data.cycleOpacity === true) {
-      return cycleWindowOpacity(mainWindow);
-    }
-    const flag = typeof data?.enable === 'boolean' ? data.enable : (typeof data?.floating === 'boolean' ? data.floating : !isWindowFloating);
-    return toggleFloatMode(mainWindow, flag);
-  });
-}
 
 /**
  * Starts the internal Express server:
@@ -783,11 +1157,36 @@ async function safeOpenExternal(rawUrl) {
   }
 }
 
+function getEffectiveServerPort() {
+  if (serverPort) return serverPort;
+  try {
+    const s = require('./server.js');
+    if (s && s.app && typeof s.app.get === 'function') {
+      const p = s.app.get('port');
+      if (p) return p;
+    }
+  } catch (e) { }
+  return null;
+}
+
+function setServerPort(port) {
+  serverPort = port;
+}
+
+function setMainWindow(win) {
+  mainWindow = win;
+}
+
+function getMainWindow() {
+  return mainWindow;
+}
+
 /**
  * Validates that an IPC invocation originated from a trusted internal frame.
  */
 function isTrustedIpcSender(event, trustedPort) {
   if (!event) return false;
+  const port = trustedPort || getEffectiveServerPort();
   const senderFrame = event.senderFrame;
   const senderUrl = (senderFrame && senderFrame.url) || (event.sender && typeof event.sender.getURL === 'function' ? event.sender.getURL() : '');
 
@@ -799,7 +1198,7 @@ function isTrustedIpcSender(event, trustedPort) {
     return Boolean(mainWindow && win && win === mainWindow);
   }
 
-  return isTrustedAppUrl(senderUrl, trustedPort);
+  return isTrustedAppUrl(senderUrl, port);
 }
 
 /**
@@ -890,6 +1289,13 @@ function createMainWindow(port) {
   // When a PiP child window is created, apply macOS system-level floating across Spaces
   mainWindow.webContents.on('did-create-window', (childWindow) => {
     setFloatingMode(childWindow, true);
+    const childState = getState(childWindow);
+    childState.alwaysOnTop = true;
+    if (typeof childWindow.once === 'function') {
+      childWindow.once('closed', () => {
+        windowStates.delete(childWindow);
+      });
+    }
 
     // Child windows must never open secondary popups
     childWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -915,6 +1321,10 @@ function createMainWindow(port) {
       }
     });
 
+    childWindow.on('blur', () => {
+      handleWindowBlur(childWindow);
+    });
+
     childWindow.on('close', () => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.focus();
@@ -922,11 +1332,44 @@ function createMainWindow(port) {
     });
   });
 
+  // Handle HTML5 Fullscreen requests (e.g. document.documentElement.requestFullscreen())
+  mainWindow.webContents.on('enter-html-full-screen', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      setWindowFullScreen(mainWindow, true);
+    }
+  });
+
+  mainWindow.webContents.on('leave-html-full-screen', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      setWindowFullScreen(mainWindow, false);
+    }
+  });
+
+  // Notify renderer when native window enters or leaves full screen
+  mainWindow.on('enter-full-screen', () => {
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+      mainWindow.webContents.send('window:fullscreen-change', true);
+    }
+  });
+
+  mainWindow.on('leave-full-screen', () => {
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+      mainWindow.webContents.send('window:fullscreen-change', false);
+    }
+  });
+
+  mainWindow.on('blur', () => {
+    handleWindowBlur(mainWindow);
+  });
+
   mainWindow.on('closed', () => {
+    if (mainWindow) {
+      clearGhostAutoRestoreTimer(mainWindow);
+      windowStates.delete(mainWindow);
+    }
     mainWindow = null;
-    isWindowFloating = false;
-    isWindowAlwaysOnTop = false;
-    isWindowGhostMode = false;
+    unregisterGhostModeShortcuts();
+    updateTrayMenu();
   });
 }
 
@@ -971,9 +1414,11 @@ function setupApplicationMenu() {
           label: 'Always on Top',
           type: 'checkbox',
           checked: false,
-          click: (menuItem) => {
+          click: () => {
             if (mainWindow && !mainWindow.isDestroyed()) {
-              setAlwaysOnTopMode(mainWindow, menuItem.checked);
+              const res = setAlwaysOnTopMode(mainWindow);
+              const aotMenuItem = Menu?.getApplicationMenu?.()?.getMenuItemById('menu-always-on-top');
+              if (aotMenuItem) aotMenuItem.checked = Boolean(res?.isAlwaysOnTop);
             }
           }
         },
@@ -983,22 +1428,34 @@ function setupApplicationMenu() {
           accelerator: 'CmdOrCtrl+Shift+A',
           type: 'checkbox',
           checked: false,
-          click: (menuItem) => {
+          click: () => {
             if (mainWindow && !mainWindow.isDestroyed()) {
-              toggleFloatMode(mainWindow, menuItem.checked);
+              const res = toggleFloatMode(mainWindow);
+              const floatMenuItem = Menu?.getApplicationMenu?.()?.getMenuItemById('menu-float-mode');
+              if (floatMenuItem) floatMenuItem.checked = Boolean(res?.floating);
             }
           }
         },
         {
           id: 'menu-ghost-mode',
           label: 'Ghost Mode (Click-Through Overlay)',
-          accelerator: 'CmdOrCtrl+Shift+G',
+          type: 'checkbox',
+          checked: false,
+          click: () => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              const res = toggleGhostMode(mainWindow);
+              const ghostMenuItem = Menu?.getApplicationMenu?.()?.getMenuItemById('menu-ghost-mode');
+              if (ghostMenuItem) ghostMenuItem.checked = Boolean(res?.isGhostMode);
+            }
+          }
+        },
+        {
+          id: 'menu-ghost-restore-on-blur',
+          label: 'Exit Ghost Mode on Focus Loss',
           type: 'checkbox',
           checked: false,
           click: (menuItem) => {
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              toggleGhostMode(mainWindow, menuItem.checked);
-            }
+            setRestoreGhostOnBlur(Boolean(menuItem.checked));
           }
         },
         { type: 'separator' },
@@ -1059,13 +1516,38 @@ function setupApplicationMenu() {
 
 // IPC Handlers for frontend float / always-on-top requests
 if (isElectron && ipcMain) {
+  ipcMain.handle('get-window-state', (event) => {
+    if (!isTrustedIpcSender(event, serverPort)) {
+      console.warn('[Security] Blocked unauthorized get-window-state');
+      return { isElectron: false, floating: false, isAlwaysOnTop: false, isGhostMode: false, error: 'Unauthorized' };
+    }
+    const win = (event && event.sender && typeof BrowserWindow.fromWebContents === 'function')
+      ? BrowserWindow.fromWebContents(event.sender)
+      : mainWindow;
+    const state = getState(win || mainWindow);
+    const currentAot = win && !win.isDestroyed() && typeof win.isAlwaysOnTop === 'function' ? win.isAlwaysOnTop() : state.alwaysOnTop;
+    const currentFs = win && !win.isDestroyed() && typeof win.isFullScreen === 'function' ? win.isFullScreen() : false;
+    return {
+      isElectron: true,
+      floating: Boolean(state.floating),
+      isAlwaysOnTop: Boolean(currentAot),
+      isGhostMode: Boolean(state.isGhostMode),
+      isFullScreen: Boolean(currentFs),
+      isLinux: process.platform === 'linux',
+      isClickThroughSupported: process.platform !== 'linux',
+      restoreGhostOnBlur: getRestoreGhostOnBlur(win || mainWindow)
+    };
+  });
+
   ipcMain.handle('dialog:pick-directory', async (event) => {
     // Sensitive capability: only permit from trusted origin and specifically the primary mainWindow
     if (!isTrustedIpcSender(event, serverPort)) {
       console.warn('[Security] Blocked unauthorized dialog:pick-directory from untrusted sender');
       return { canceled: true, path: null, error: 'Unauthorized IPC sender' };
     }
-    const callingWin = (event && event.sender) ? BrowserWindow.fromWebContents(event.sender) : null;
+    const callingWin = (event && event.sender && typeof BrowserWindow.fromWebContents === 'function')
+      ? BrowserWindow.fromWebContents(event.sender)
+      : null;
     if (callingWin && mainWindow && callingWin !== mainWindow) {
       console.warn('[Security] Blocked dialog:pick-directory called from non-main child window');
       return { canceled: true, path: null, error: 'Directory picking only permitted from main window' };
@@ -1078,7 +1560,10 @@ if (isElectron && ipcMain) {
     if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
       return { canceled: true, path: null };
     }
-    return { canceled: false, path: result.filePaths[0] };
+    const pickedPath = result.filePaths[0];
+    const { registerTrustedFolder } = require('./server.js');
+    registerTrustedFolder(pickedPath);
+    return { canceled: false, path: pickedPath };
   });
 
   ipcMain.handle('toggle-float-mode', (event, flag) => {
@@ -1144,28 +1629,124 @@ if (isElectron && ipcMain) {
     return setWindowOpacity(win || mainWindow, targetOpacity);
   });
 
+  ipcMain.handle('keep-ghost-mode', (event) => {
+    if (!isTrustedIpcSender(event, serverPort)) {
+      return { success: false, error: 'Unauthorized' };
+    }
+    const win = (event && event.sender && typeof BrowserWindow.fromWebContents === 'function')
+      ? BrowserWindow.fromWebContents(event.sender)
+      : mainWindow;
+    return keepGhostMode(win || mainWindow);
+  });
+
+  ipcMain.handle('set-restore-ghost-on-blur', (event, flag) => {
+    if (!isTrustedIpcSender(event, serverPort)) {
+      console.warn('[Security] Blocked unauthorized set-restore-ghost-on-blur');
+      return { isElectron: true, error: 'Unauthorized' };
+    }
+    const win = (event && event.sender && typeof BrowserWindow.fromWebContents === 'function')
+      ? BrowserWindow.fromWebContents(event.sender)
+      : mainWindow;
+    return setRestoreGhostOnBlur(flag, win || mainWindow);
+  });
+
+  ipcMain.handle('get-restore-ghost-on-blur', (event) => {
+    if (!isTrustedIpcSender(event, serverPort)) {
+      return false;
+    }
+    const win = (event && event.sender && typeof BrowserWindow.fromWebContents === 'function')
+      ? BrowserWindow.fromWebContents(event.sender)
+      : mainWindow;
+    return getRestoreGhostOnBlur(win || mainWindow);
+  });
+
   ipcMain.on('set-ignore-mouse-events', (event, ignore, options) => {
     if (!isTrustedIpcSender(event, serverPort)) {
       console.warn('[Security] Blocked unauthorized set-ignore-mouse-events');
       return;
     }
-    const win = (event && event.sender) ? BrowserWindow.fromWebContents(event.sender) : mainWindow;
+    if (typeof ignore !== 'boolean') {
+      console.warn('[Security] Rejected set-ignore-mouse-events: ignore must be a boolean');
+      return;
+    }
+    let forward = true;
+    if (options !== undefined && options !== null) {
+      if (typeof options !== 'object' || typeof options.forward !== 'boolean') {
+        console.warn('[Security] Rejected set-ignore-mouse-events: options.forward must be a boolean');
+        return;
+      }
+      forward = options.forward;
+    }
+
+    if (process.platform === 'linux') {
+      // Linux does not support forward:true or click-through safely
+      return;
+    }
+
+    const win = (event && event.sender && typeof BrowserWindow.fromWebContents === 'function')
+      ? BrowserWindow.fromWebContents(event.sender)
+      : mainWindow;
     if (!win || win.isDestroyed()) return;
 
-    const ghostState = getWindowGhostState(win);
-    if (ghostState.isGhostMode) {
-      win.setIgnoreMouseEvents(!!ignore, options || { forward: true });
+    const ghostState = getState(win);
+    if (ghostState.ghost) {
+      win.setIgnoreMouseEvents(ignore, { forward });
     } else {
       win.setIgnoreMouseEvents(false);
     }
   });
+
+  ipcMain.handle('set-fullscreen', (event, flag) => {
+    if (!isTrustedIpcSender(event, serverPort)) {
+      console.warn('[Security] Blocked unauthorized set-fullscreen');
+      return { success: false, isFullScreen: false, error: 'Unauthorized' };
+    }
+    const win = (event && event.sender && typeof BrowserWindow.fromWebContents === 'function')
+      ? BrowserWindow.fromWebContents(event.sender)
+      : mainWindow;
+    return setWindowFullScreen(win || mainWindow, flag);
+  });
+
+  ipcMain.handle('toggle-fullscreen', (event) => {
+    if (!isTrustedIpcSender(event, serverPort)) {
+      console.warn('[Security] Blocked unauthorized toggle-fullscreen');
+      return { success: false, isFullScreen: false, error: 'Unauthorized' };
+    }
+    const win = (event && event.sender && typeof BrowserWindow.fromWebContents === 'function')
+      ? BrowserWindow.fromWebContents(event.sender)
+      : mainWindow;
+    return toggleWindowFullScreen(win || mainWindow);
+  });
+
+  ipcMain.handle('is-fullscreen', (event) => {
+    if (!isTrustedIpcSender(event, serverPort)) {
+      return false;
+    }
+    const win = (event && event.sender && typeof BrowserWindow.fromWebContents === 'function')
+      ? BrowserWindow.fromWebContents(event.sender)
+      : mainWindow;
+    if (!win || win.isDestroyed()) return false;
+    return typeof win.isFullScreen === 'function' ? win.isFullScreen() : false;
+  });
+
+  ipcMain.on('app:quit-flush-ack', (event) => {
+    if (!isTrustedIpcSender(event, serverPort)) return;
+    if (quitFlushResolve) {
+      quitFlushResolve();
+      quitFlushResolve = null;
+    }
+  });
 }
+
+let isQuitting = false;
+let quitFlushResolve = null;
 
 // Application Lifecycle
 if (isElectron && app) {
   app.whenReady().then(async () => {
     try {
       setupApplicationMenu();
+      setupTray();
 
       // Deny all unnecessary device/sensor/hardware permission requests by default
       if (session && session.defaultSession) {
@@ -1176,34 +1757,15 @@ if (isElectron && app) {
         session.defaultSession.setPermissionCheckHandler(() => false);
       }
 
-      // Register global shortcuts for Ghost Mode & Opacity controls
+      // Register global shortcuts: keep ONLY CmdOrCtrl+Shift+G
       if (globalShortcut && typeof globalShortcut.register === 'function') {
-        const registerGlobal = (accelerator, handler) => {
-          try {
-            globalShortcut.register(accelerator, handler);
-          } catch (err) {
-            console.warn(`[Electron] Failed to register global shortcut ${accelerator}:`, err);
-          }
-        };
-
-        registerGlobal('CmdOrCtrl+Shift+G', () => {
-          if (mainWindow && !mainWindow.isDestroyed()) toggleGhostMode(mainWindow);
-        });
-        registerGlobal('CmdOrCtrl+Shift+Up', () => {
-          if (mainWindow && !mainWindow.isDestroyed()) adjustWindowOpacity(mainWindow, 0.10);
-        });
-        registerGlobal('CmdOrCtrl+Shift+Down', () => {
-          if (mainWindow && !mainWindow.isDestroyed()) adjustWindowOpacity(mainWindow, -0.10);
-        });
-        registerGlobal('CmdOrCtrl+Shift+]', () => {
-          if (mainWindow && !mainWindow.isDestroyed()) adjustWindowOpacity(mainWindow, 0.10);
-        });
-        registerGlobal('CmdOrCtrl+Shift+[', () => {
-          if (mainWindow && !mainWindow.isDestroyed()) adjustWindowOpacity(mainWindow, -0.10);
-        });
-        registerGlobal('CmdOrCtrl+Shift+O', () => {
-          if (mainWindow && !mainWindow.isDestroyed()) cycleWindowOpacity(mainWindow);
-        });
+        try {
+          globalShortcut.register('CmdOrCtrl+Shift+G', () => {
+            if (mainWindow && !mainWindow.isDestroyed()) toggleGhostMode(mainWindow);
+          });
+        } catch (err) {
+          console.warn('[Electron] Failed to register global shortcut CmdOrCtrl+Shift+G:', err);
+        }
       }
 
       const { server, port } = await initializeServer();
@@ -1220,6 +1782,10 @@ if (isElectron && app) {
         createMainWindow(serverPort);
       }
     });
+
+    app.on('browser-window-blur', (event, win) => {
+      handleWindowBlur(win);
+    });
   });
 
   app.on('window-all-closed', () => {
@@ -1228,29 +1794,84 @@ if (isElectron && app) {
     }
   });
 
-  app.on('before-quit', () => {
+  app.on('before-quit', (event) => {
     if (globalShortcut && typeof globalShortcut.unregisterAll === 'function') {
       globalShortcut.unregisterAll();
     }
-    if (serverInstance && typeof serverInstance.close === 'function') {
-      serverInstance.close();
+    if (appTray && typeof appTray.destroy === 'function') {
+      appTray.destroy();
+      appTray = null;
     }
+
+    if (isQuitting) {
+      if (serverInstance && typeof serverInstance.close === 'function') {
+        serverInstance.close();
+      }
+      return;
+    }
+
+    event.preventDefault();
+    isQuitting = true;
+
+    let timeoutId;
+    const waitForFlush = new Promise((resolve) => {
+      quitFlushResolve = resolve;
+      timeoutId = setTimeout(() => {
+        console.warn('[Electron] Renderer quit flush timed out after 3s; proceeding with quit.');
+        resolve();
+      }, 3000);
+    });
+
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+      mainWindow.webContents.send('app:before-quit');
+    } else {
+      if (quitFlushResolve) {
+        quitFlushResolve();
+        quitFlushResolve = null;
+      }
+    }
+
+    waitForFlush.then(() => {
+      clearTimeout(timeoutId);
+      app.quit();
+    });
   });
 }
 
 module.exports = {
   migrateLegacyRepoUserdata,
+  isDestinationFileValid,
   setFloatingMode,
   toggleFloatMode,
   setAlwaysOnTopMode,
   toggleGhostMode,
+  safeSetOpacity,
+  setWindowFullScreen,
+  toggleWindowFullScreen,
+  setupTray,
+  updateTrayMenu,
+  getAppTray: () => appTray,
+  setAppTray: (tray) => { appTray = tray; },
+  startGhostAutoRestoreTimer,
+  clearGhostAutoRestoreTimer,
+  keepGhostMode,
+  setRestoreGhostOnBlur,
+  getRestoreGhostOnBlur,
+  handleWindowBlur,
+  registerGhostModeShortcuts,
+  unregisterGhostModeShortcuts,
   setWindowOpacity,
   adjustWindowOpacity,
   cycleWindowOpacity,
   getWindowGhostState,
+  getState,
+  windowStates,
   GHOST_MODE_OPACITY,
   isTrustedAppUrl,
   safeOpenExternal,
-  isTrustedIpcSender
+  isTrustedIpcSender,
+  setServerPort,
+  setMainWindow,
+  getMainWindow
 };
 
