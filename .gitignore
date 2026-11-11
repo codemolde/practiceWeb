@@ -30,3 +30,17 @@ userdata/
 * copy.*
 * copy
 
+
+# Project and agent memory
+PROJECT_MEMORY.md
+project_memory.md
+memory.md
+
+# Startup scripts
+start_art_practice.command
+start_art_practice*.command
+*.command
+
+# Demo / sample references
+demo_references/
+demo_refernces/

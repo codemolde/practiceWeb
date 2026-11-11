@@ -29,7 +29,6 @@
       "child-preload.js",
       "public/**/*",
       "assets/**/*",
-      "demo_references/**/*",
       "package.json"
     ],
     "mac": {
