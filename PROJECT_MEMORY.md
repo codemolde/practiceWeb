@@ -68,6 +68,10 @@ practiceWeb/
 │   ├── index.html             — Single Page Application markup (zero inline scripts or handlers).
 │   ├── env-detect.js          — External synchronous desktop/OS detection script.
 │   ├── style.css              — Munsell-neutral atelier theme, layouts, and tool styling.
+│   ├── js/
+│   │   └── palette.js         — ColorPaletteManager: CIELAB (D65) L*, Munsell Value (0-10),
+│   │                            Lab median-cut clustering, CIEDE2000 merging, relative temperature,
+│   │                            and live averaging eyedropper.
 │   └── app.js                 — Frontend client modules:
 │                                • Storage        — Disk sync coordinator & IndexedDB wallpaper store
 │                                • DeckManager    — Deck creation, editing, and deletion
@@ -96,6 +100,7 @@ practiceWeb/
     ├── image-security.test.js        — /api/image media type rejection and SSRF tests
     ├── local-date.test.js            — Timezone consistency and local calendar date handling
     ├── migration-replaceable.test.js — Empty state replacement & pre-migration backups
+    ├── palette.test.js               — ColorPaletteManager CIELAB L*, Delta-E, temperature, eyedropper
     ├── srs-algorithm.test.js         — SM-2 intervals, mean reversion, and timer weighting
     ├── storage-safety.test.js        — Disk sync error handling, banner, and quit flushing
     ├── sync-backups.test.js          — Atomic writes, backup rotation, and crash recovery

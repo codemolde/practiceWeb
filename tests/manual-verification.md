@@ -74,3 +74,31 @@ Status: **MANUAL-NOT-RUN** (Do not mark as passed until manually verified by the
   5. Press **Esc** or click the **Exit** button (or press **F**).
 - **Expected**: The app enters OS-level fullscreen space filling 100% of the display. Exiting restores the window cleanly to its previous dimensions and coordinates.
 
+---
+
+### Check 8: Eyedropper Accuracy Against Photoshop Swatch (MANUAL-NOT-RUN)
+- **Steps**:
+  1. Open a test reference image in Adobe Photoshop (or standard image editor with sRGB profile) alongside Art Practice Reference Studio.
+  2. Sample a specific known color region in Photoshop using the Info panel set to `RGB`, `HSB`, and `Lab (L* a* b*)`.
+  3. In Art Practice Studio, open the Dominant Palette & Lighting HUD (`E`) and toggle on the Live Eyedropper.
+  4. Set sample size to `1px` (or matching Photoshop sample size e.g. `3x3` or `5x5 Average`).
+  5. Hover over the exact corresponding coordinate in the reference image.
+  6. Inspect the inspector readout:
+     - CIELAB `L*` value (and Munsell Value `0-10`).
+     - Chroma `C*` next to HSB.
+     - Warm/Cool/Neutral temperature badge and relative temperature indicator.
+  7. Click the copy format dropdown menu (HEX, RGB, HSB, Lab) and paste into an editor.
+- **Expected**: CIELAB $L^*$ and RGB values match browser-decoded sRGB pixel values accurately (e.g. white = 100, black = 0, mid-tone grey ≈ 50-54). Tooltip clearly states values are browser-decoded sRGB without claiming ICC-color-managed accuracy.
+
+---
+
+### Check 9: Picture-in-Picture (PiP) Window Operation (MANUAL-NOT-RUN)
+- **Steps**:
+  1. Start a practice study session with a reference image.
+  2. Open the Palette HUD (`E`).
+  3. Click the **PiP** button (`P` or toolbar icon) to enter Picture-in-Picture (Document PiP on Chromium or Canvas Video Streamer on Safari).
+  4. Move or minimize the main window while practicing in drawing software (Photoshop, Procreate, Clip Studio Paint).
+  5. Close PiP window or click Restore.
+- **Expected**: PiP window streams the reference canvas cleanly, updates countdown timer and SRS legend, and exiting PiP restores focus to the main studio window without UI stutter or memory leak.
+
+

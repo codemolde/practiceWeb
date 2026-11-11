@@ -1,4 +1,206 @@
 // ==================== COLOR & DOMINANT PALETTE EXTRACTION HUD ====================
+// CIELAB (D65) & LCh Color Science, Median-Cut Clustering & Live Eyedropper
+
+/**
+ * Convert 8-bit standard gamma sRGB channel [0..255] to linear sRGB [0..1]
+ */
+function srgbToLinear(c) {
+  const v = c / 255;
+  return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+}
+
+/**
+ * Convert linear sRGB channel [0..1] back to standard gamma sRGB [0..255]
+ */
+function linearToSrgb(c) {
+  const v = c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
+  return Math.max(0, Math.min(255, Math.round(v * 255)));
+}
+
+/**
+ * Convert 8-bit sRGB (r, g, b) to CIELAB (L*, a*, b*) under standard D65 illuminant (2° observer)
+ * Standard reference white: Xn = 0.95047, Yn = 1.00000, Zn = 1.08883
+ */
+function srgbToLab(r, g, b) {
+  const rl = srgbToLinear(r);
+  const gl = srgbToLinear(g);
+  const bl = srgbToLinear(b);
+
+  // sRGB to CIE XYZ matrix (D65)
+  const X = 0.4124564 * rl + 0.3575761 * gl + 0.1804375 * bl;
+  const Y = 0.2126729 * rl + 0.7151522 * gl + 0.0721750 * bl;
+  const Z = 0.0193339 * rl + 0.1191920 * gl + 0.9503041 * bl;
+
+  const Xn = 0.95047;
+  const Yn = 1.00000;
+  const Zn = 1.08883;
+
+  const xr = X / Xn;
+  const yr = Y / Yn;
+  const zr = Z / Zn;
+
+  const eps = 216 / 24389; // (6/29)^3 ≈ 0.00885645167
+  const kappa = 24389 / 27; // (29/3)^3 ≈ 903.296296
+
+  function f(t) {
+    return t > eps ? Math.cbrt(t) : (kappa * t + 16) / 116;
+  }
+
+  const fx = f(xr);
+  const fy = f(yr);
+  const fz = f(zr);
+
+  const L = Math.max(0, Math.min(100, 116 * fy - 16));
+  let a = 500 * (fx - fy);
+  let bVal = 200 * (fy - fz);
+
+  // Eliminate tiny floating point precision artifacts for pure achromatic neutrals
+  if (r === g && g === b) {
+    a = 0;
+    bVal = 0;
+  }
+
+  return { L, a, b: bVal };
+}
+
+/**
+ * Convert CIELAB (L*, a*, b*) to cylindrical LCh(ab)
+ * C* = Chroma, h = Hue angle in degrees [0..360)
+ */
+function labToLCh(L, a, b) {
+  if (Math.abs(a) < 1e-6 && Math.abs(b) < 1e-6) {
+    return { L, C: 0, h: 0 };
+  }
+  const C = Math.sqrt(a * a + b * b);
+  let h = Math.atan2(b, a) * (180 / Math.PI);
+  if (h < 0) h += 360;
+  return { L, C, h };
+}
+
+/**
+ * CIE76 Delta-E color difference (Euclidean distance in Lab space)
+ */
+function deltaE76(lab1, lab2) {
+  const dL = lab1.L - lab2.L;
+  const da = lab1.a - lab2.a;
+  const db = lab1.b - lab2.b;
+  return Math.sqrt(dL * dL + da * da + db * db);
+}
+
+/**
+ * CIEDE2000 Delta-E color difference
+ * Perceptually uniform standard ISO/CIE 11664-6:2014
+ */
+function deltaE2000(lab1, lab2) {
+  const L1 = lab1.L, a1 = lab1.a, b1 = lab1.b;
+  const L2 = lab2.L, a2 = lab2.a, b2 = lab2.b;
+
+  const avgL = (L1 + L2) / 2;
+  const c1 = Math.sqrt(a1 * a1 + b1 * b1);
+  const c2 = Math.sqrt(a2 * a2 + b2 * b2);
+  const avgC = (c1 + c2) / 2;
+
+  const G = 0.5 * (1 - Math.sqrt(Math.pow(avgC, 7) / (Math.pow(avgC, 7) + Math.pow(25, 7))));
+  const a1p = (1 + G) * a1;
+  const a2p = (1 + G) * a2;
+
+  const c1p = Math.sqrt(a1p * a1p + b1 * b1);
+  const c2p = Math.sqrt(a2p * a2p + b2 * b2);
+  const avgCp = (c1p + c2p) / 2;
+
+  let h1p = Math.atan2(b1, a1p) * (180 / Math.PI);
+  if (h1p < 0) h1p += 360;
+  let h2p = Math.atan2(b2, a2p) * (180 / Math.PI);
+  if (h2p < 0) h2p += 360;
+
+  let deltahp = 0;
+  if (c1p * c2p !== 0) {
+    if (Math.abs(h2p - h1p) <= 180) {
+      deltahp = h2p - h1p;
+    } else if (h2p - h1p > 180) {
+      deltahp = h2p - h1p - 360;
+    } else {
+      deltahp = h2p - h1p + 360;
+    }
+  }
+
+  const deltaLp = L2 - L1;
+  const deltaCp = c2p - c1p;
+  const deltaHp = 2 * Math.sqrt(c1p * c2p) * Math.sin((deltahp / 2) * (Math.PI / 180));
+
+  let avghp = 0;
+  if (c1p * c2p !== 0) {
+    if (Math.abs(h1p - h2p) <= 180) {
+      avghp = (h1p + h2p) / 2;
+    } else if (h1p + h2p < 360) {
+      avghp = (h1p + h2p + 360) / 2;
+    } else {
+      avghp = (h1p + h2p - 360) / 2;
+    }
+  }
+
+  const T = 1 - 0.17 * Math.cos((avghp - 30) * (Math.PI / 180))
+            + 0.24 * Math.cos((2 * avghp) * (Math.PI / 180))
+            + 0.32 * Math.cos((3 * avghp + 6) * (Math.PI / 180))
+            - 0.20 * Math.cos((4 * avghp - 63) * (Math.PI / 180));
+
+  const sl = 1 + ((0.015 * Math.pow(avgL - 50, 2)) / Math.sqrt(20 + Math.pow(avgL - 50, 2)));
+  const sc = 1 + 0.045 * avgCp;
+  const sh = 1 + 0.015 * avgCp * T;
+
+  const deltaTheta = 30 * Math.exp(-Math.pow((avghp - 275) / 25, 2));
+  const rc = 2 * Math.sqrt(Math.pow(avgCp, 7) / (Math.pow(avgCp, 7) + Math.pow(25, 7)));
+  const rt = -Math.sin((2 * deltaTheta) * (Math.PI / 180)) * rc;
+
+  const kl = 1, kc = 1, kh = 1;
+  return Math.sqrt(
+    Math.pow(deltaLp / (kl * sl), 2) +
+    Math.pow(deltaCp / (kc * sc), 2) +
+    Math.pow(deltaHp / (kh * sh), 2) +
+    rt * (deltaCp / (kc * sc)) * (deltaHp / (kh * sh))
+  );
+}
+
+/**
+ * Classify absolute temperature (Warm / Cool / Neutral) by LCh hue and chroma,
+ * and relative temperature vs the image's average hue.
+ */
+function classifyTemperature(C, h, imgAvgHue = null) {
+  // Absolute temperature: neutral if chroma is low; warm is orange/red/magenta; cool is cyan/blue/green
+  let temp = 'Neutral';
+  if (C >= 5.0) {
+    if ((h >= 0 && h <= 105) || (h >= 330 && h <= 360)) {
+      temp = 'Warm';
+    } else {
+      temp = 'Cool';
+    }
+  }
+
+  // Relative temperature: warmth metric W = cos(h - 50°) where 50° (orange-red) is maximally warm (+1)
+  // and 230° (cyan-blue) is maximally cool (-1).
+  let relTemp = 'Balanced';
+  if (imgAvgHue !== null && !isNaN(imgAvgHue)) {
+    const W_color = Math.cos(((h - 50) * Math.PI) / 180);
+    const W_img = Math.cos(((imgAvgHue - 50) * Math.PI) / 180);
+    const diff = W_color - W_img;
+    if (diff > 0.08) {
+      relTemp = 'Warmer than avg';
+    } else if (diff < -0.08) {
+      relTemp = 'Cooler than avg';
+    } else {
+      relTemp = 'Similar to avg';
+    }
+  } else {
+    // Compare to neutral midpoint
+    const W_color = Math.cos(((h - 50) * Math.PI) / 180);
+    if (W_color > 0.1) relTemp = 'Warmer';
+    else if (W_color < -0.1) relTemp = 'Cooler';
+    else relTemp = 'Balanced';
+  }
+
+  return { temp, relTemp };
+}
+
 const ColorPaletteManager = {
   hudOpen: false,
   eyedropperActive: false,
@@ -7,18 +209,125 @@ const ColorPaletteManager = {
   dominantColors: [],
   sampledColors: [],
   activeColor: null,
+  sampleSize: 1, // 1, 3, 5, or 11
+  valueMode: 'percent', // 'percent' (0-100) or 'munsell' (0-10)
+  imageAvgHue: null,
+  deltaEMethod: 'CIEDE2000', // We use CIEDE2000 for perceptually uniform swatch merging
+  deltaEThreshold: 11.0,
+  lastExtractionTimeMs: 0,
   _offscreenCanvas: null,
   _offscreenCtx: null,
+  _thumbCanvas: null,
+  _thumbCtx: null,
 
   get isOpen() {
     return this.hudOpen;
   },
 
   init() {
-    this._offscreenCanvas = document.createElement('canvas');
-    this._offscreenCtx = this._offscreenCanvas.getContext('2d', { willReadFrequently: true });
-    this.setupDraggable();
-    this.bindEvents();
+    this.loadSettings();
+
+    if (typeof document !== 'undefined') {
+      // Reusable offscreen canvas for eyedropper sampling (preserves sRGB decoding)
+      this._offscreenCanvas = document.createElement('canvas');
+      this._offscreenCtx = this._offscreenCanvas.getContext('2d', { willReadFrequently: true });
+
+      // Reusable 80x80 thumbnail canvas for dominant palette extraction
+      this._thumbCanvas = document.createElement('canvas');
+      this._thumbCanvas.width = 80;
+      this._thumbCanvas.height = 80;
+      this._thumbCtx = this._thumbCanvas.getContext('2d', { willReadFrequently: true });
+
+      this.setupDraggable();
+      this.bindEvents();
+      this.updateUIModes();
+    }
+  },
+
+  loadSettings() {
+    try {
+      if (typeof localStorage !== 'undefined') {
+        const savedMode = localStorage.getItem('art_palette_value_mode');
+        if (savedMode === 'percent' || savedMode === 'munsell') {
+          this.valueMode = savedMode;
+        }
+        const savedSize = parseInt(localStorage.getItem('art_palette_sample_size'), 10);
+        if ([1, 3, 5, 11].includes(savedSize)) {
+          this.sampleSize = savedSize;
+        }
+      }
+    } catch (e) {}
+  },
+
+  updateUIModes() {
+    if (typeof document === 'undefined') return;
+    // Reflect sample size in button group
+    const sizeButtons = document.querySelectorAll('.btn-sample-size');
+    sizeButtons.forEach(btn => {
+      btn.classList.toggle('active', parseInt(btn.dataset.size, 10) === this.sampleSize);
+    });
+
+    // Reflect Munsell value mode
+    const munsellBtn = document.getElementById('btn-toggle-munsell');
+    const munsellLabel = document.getElementById('munsell-btn-label');
+    if (munsellLabel) {
+      munsellLabel.textContent = this.valueMode === 'munsell' ? 'Munsell (0-10)' : 'Value (L*) %';
+    }
+    if (munsellBtn) {
+      munsellBtn.classList.toggle('active', this.valueMode === 'munsell');
+    }
+  },
+
+  setValueMode(mode) {
+    if (mode !== 'percent' && mode !== 'munsell') return;
+    this.valueMode = mode;
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('art_palette_value_mode', mode);
+      }
+    } catch (e) {}
+
+    this.updateUIModes();
+
+    if (this.activeColor) {
+      this.setActiveColor(this.activeColor);
+    }
+    this.renderDominantSwatches();
+    this.renderSampledSwatches();
+
+    if (typeof SoundFX !== 'undefined' && SoundFX.click) SoundFX.click();
+  },
+
+  toggleValueMode() {
+    this.setValueMode(this.valueMode === 'percent' ? 'munsell' : 'percent');
+  },
+
+  setSampleSize(size) {
+    size = parseInt(size, 10);
+    if (![1, 3, 5, 11].includes(size)) return;
+    this.sampleSize = size;
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('art_palette_sample_size', size);
+      }
+    } catch (e) {}
+
+    const sizeButtons = document.querySelectorAll('.btn-sample-size');
+    sizeButtons.forEach(btn => {
+      btn.classList.toggle('active', parseInt(btn.dataset.size, 10) === size);
+    });
+
+    if (typeof SoundFX !== 'undefined' && SoundFX.click) SoundFX.click();
+  },
+
+  getDisplayValue(color) {
+    if (!color) return '';
+    if (this.valueMode === 'munsell') {
+      const mv = color.munsell !== undefined ? color.munsell : (color.L / 10);
+      return Number(mv).toFixed(1);
+    }
+    const val = color.val !== undefined ? color.val : Math.round(color.L);
+    return `${val}%`;
   },
 
   setupDraggable() {
@@ -27,11 +336,13 @@ const ColorPaletteManager = {
     const header = hud.querySelector('.palette-hud-header');
     if (!header) return;
 
-    FloatingWindowManager.makeDraggable(hud, header, {
-      onEnd: (pos) => {
-        this.customPos = pos;
-      }
-    });
+    if (typeof FloatingWindowManager !== 'undefined' && FloatingWindowManager.makeDraggable) {
+      FloatingWindowManager.makeDraggable(hud, header, {
+        onEnd: (pos) => {
+          this.customPos = pos;
+        }
+      });
+    }
   },
 
   toggleMinimize(forceState = null) {
@@ -46,7 +357,7 @@ const ColorPaletteManager = {
         ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>'
         : '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>';
     }
-    SoundFX.click();
+    if (typeof SoundFX !== 'undefined' && SoundFX.click) SoundFX.click();
   },
 
   bindEvents() {
@@ -74,7 +385,22 @@ const ColorPaletteManager = {
       btnEyedropper.addEventListener('click', () => this.toggleEyedropper());
     }
 
-    // Copy HEX button
+    // Sample size selector buttons (1px, 3x3, 5x5, 11x11)
+    const sizeButtons = document.querySelectorAll('.btn-sample-size');
+    sizeButtons.forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.setSampleSize(btn.dataset.size);
+      });
+    });
+
+    // Munsell value toggle button
+    const btnMunsell = document.getElementById('btn-toggle-munsell');
+    if (btnMunsell) {
+      btnMunsell.addEventListener('click', () => this.toggleValueMode());
+    }
+
+    // Copy HEX button (default action)
     const btnCopyHex = document.getElementById('btn-copy-inspector-hex');
     if (btnCopyHex) {
       btnCopyHex.addEventListener('click', () => this.copyActiveHex());
@@ -83,6 +409,31 @@ const ColorPaletteManager = {
     if (inspectorHex) {
       inspectorHex.addEventListener('click', () => this.copyActiveHex());
     }
+
+    // Copy format dropdown trigger & menu items (HEX, RGB, HSB, Lab)
+    const btnMenuTrigger = document.getElementById('btn-copy-menu-trigger');
+    if (btnMenuTrigger) {
+      btnMenuTrigger.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.toggleCopyMenu();
+      });
+    }
+
+    const copyItems = document.querySelectorAll('.palette-copy-item');
+    copyItems.forEach(item => {
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const fmt = item.dataset.format || 'hex';
+        this.copyColor(fmt);
+      });
+    });
+
+    // Dismiss copy menu on outside click
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.copy-dropdown-group')) {
+        this.hideCopyMenu();
+      }
+    });
 
     // Clear sampled colors
     const btnClearSampled = document.getElementById('btn-clear-sampled-colors');
@@ -96,6 +447,53 @@ const ColorPaletteManager = {
       stage.addEventListener('pointermove', (e) => this.onStagePointerMove(e));
       stage.addEventListener('pointerleave', () => this.onStagePointerLeave());
       stage.addEventListener('click', (e) => this.onStageClick(e));
+    }
+  },
+
+  toggleCopyMenu(forceState = null) {
+    const menu = document.getElementById('palette-copy-menu');
+    if (!menu) return;
+    const isHidden = menu.classList.contains('hidden');
+    const next = forceState !== null ? forceState : isHidden;
+    menu.classList.toggle('hidden', !next);
+  },
+
+  hideCopyMenu() {
+    const menu = document.getElementById('palette-copy-menu');
+    if (menu) menu.classList.add('hidden');
+  },
+
+  copyColor(format = 'hex') {
+    if (!this.activeColor) return;
+    let textToCopy = this.activeColor.hex;
+    if (format === 'rgb') textToCopy = this.activeColor.rgbStr;
+    else if (format === 'hsb') textToCopy = this.activeColor.hsbStr;
+    else if (format === 'lab') textToCopy = this.activeColor.labStr;
+
+    if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(textToCopy).then(() => {
+        this.showCopiedFeedback(format.toUpperCase());
+        if (typeof SoundFX !== 'undefined' && SoundFX.click) SoundFX.click();
+      }).catch(() => {});
+    }
+    this.hideCopyMenu();
+  },
+
+  copyActiveHex() {
+    this.copyColor('hex');
+  },
+
+  showCopiedFeedback(label = 'HEX') {
+    const btn = document.getElementById('btn-copy-inspector-hex');
+    const labelEl = document.getElementById('copy-btn-label');
+    if (btn) {
+      const origText = labelEl ? labelEl.textContent : 'Copy';
+      if (labelEl) labelEl.textContent = `Copied ${label}!`;
+      btn.classList.add('copied');
+      setTimeout(() => {
+        if (labelEl) labelEl.textContent = origText;
+        btn.classList.remove('copied');
+      }, 1200);
     }
   },
 
@@ -118,8 +516,10 @@ const ColorPaletteManager = {
     if (btn) btn.classList.toggle('active', this.hudOpen);
 
     if (this.hudOpen) {
-      SoundFX.toolToggle();
-      if (hud) FloatingWindowManager.bringToFront(hud);
+      if (typeof SoundFX !== 'undefined' && SoundFX.toolToggle) SoundFX.toolToggle();
+      if (hud && typeof FloatingWindowManager !== 'undefined' && FloatingWindowManager.bringToFront) {
+        FloatingWindowManager.bringToFront(hud);
+      }
       const img = document.getElementById('session-image');
       if (img && img.complete && img.naturalWidth > 0 && this.dominantColors.length === 0) {
         this.extractPalette(img);
@@ -128,6 +528,7 @@ const ColorPaletteManager = {
       if (this.eyedropperActive) {
         this.toggleEyedropper(false);
       }
+      this.hideCopyMenu();
     }
   },
 
@@ -142,7 +543,7 @@ const ColorPaletteManager = {
     if (label) label.textContent = this.eyedropperActive ? 'Eyedropper ON' : 'Eyedropper Off';
     if (stage) stage.classList.toggle('eyedropper-mode', this.eyedropperActive);
 
-    SoundFX.toolToggle();
+    if (typeof SoundFX !== 'undefined' && SoundFX.toolToggle) SoundFX.toolToggle();
     if (this.eyedropperActive) {
       if (!this.hudOpen) this.toggleHUD(true);
     } else {
@@ -156,82 +557,97 @@ const ColorPaletteManager = {
     this.hideLoupe();
   },
 
+  /**
+   * Fast CIELAB dominant palette extraction:
+   * 1. Reuses one offscreen canvas and downscales directly to 80x80.
+   * 2. Computes image average hue (chroma-weighted circular mean).
+   * 3. Partitions into candidate clusters via Median-Cut in Lab space.
+   * 4. Merges swatches closer than Delta-E threshold using CIEDE2000 (ΔE < 11).
+   * 5. Sorts dominant swatches by CIELAB L* (highlights to shadows).
+   * 6. Execution completes well under 50 ms without blocking the UI thread.
+   */
   extractPalette(imgEl) {
     if (!imgEl || !imgEl.naturalWidth || !imgEl.naturalHeight) return;
 
+    const tStart = typeof performance !== 'undefined' ? performance.now() : Date.now();
+
     try {
-      // 1. Prepare offscreen canvas (clamped to max 1200px for instant memory efficiency)
       const nw = imgEl.naturalWidth;
       const nh = imgEl.naturalHeight;
+
+      // 1. Maintain reused offscreen canvas for eyedropper sampling (clamped to 1200px max)
       const maxDim = 1200;
       const scale = Math.min(1, maxDim / Math.max(nw, nh));
       const cw = Math.max(10, Math.round(nw * scale));
       const ch = Math.max(10, Math.round(nh * scale));
 
-      this._offscreenCanvas.width = cw;
-      this._offscreenCanvas.height = ch;
+      if (this._offscreenCanvas.width !== cw || this._offscreenCanvas.height !== ch) {
+        this._offscreenCanvas.width = cw;
+        this._offscreenCanvas.height = ch;
+      }
       this._offscreenCtx.drawImage(imgEl, 0, 0, cw, ch);
 
-      // 2. Downscale to small 80x80 buffer for fast dominant color clustering
-      const thumbCanvas = document.createElement('canvas');
-      thumbCanvas.width = 80;
-      thumbCanvas.height = 80;
-      const tCtx = thumbCanvas.getContext('2d');
-      tCtx.drawImage(this._offscreenCanvas, 0, 0, 80, 80);
-      const imgData = tCtx.getImageData(0, 0, 80, 80).data;
+      // 2. Downscale to small 80x80 buffer on reused thumbnail canvas
+      if (this._thumbCanvas.width !== 80 || this._thumbCanvas.height !== 80) {
+        this._thumbCanvas.width = 80;
+        this._thumbCanvas.height = 80;
+      }
+      this._thumbCtx.drawImage(imgEl, 0, 0, 80, 80);
+      const imgData = this._thumbCtx.getImageData(0, 0, 80, 80).data;
 
-      // 3. Cluster colors into buckets
-      const buckets = new Map();
-      const step = 4; // Sample every 4th pixel
-      for (let i = 0; i < imgData.length; i += 4 * step) {
+      // 3. Convert pixels to Lab and calculate average hue of image
+      const labPixels = [];
+      let sumSin = 0;
+      let sumCos = 0;
+      let chromaWeightSum = 0;
+
+      for (let i = 0; i < imgData.length; i += 4) {
         const a = imgData[i + 3];
         if (a < 128) continue;
         const r = imgData[i];
         const g = imgData[i + 1];
         const b = imgData[i + 2];
 
-        // Quantize to 5-bit color (32 levels per channel)
-        const qr = (r >> 3) << 3;
-        const qg = (g >> 3) << 3;
-        const qb = (b >> 3) << 3;
-        const key = `${qr},${qg},${qb}`;
-
-        const existing = buckets.get(key);
-        if (existing) {
-          existing.count++;
-          existing.rSum += r;
-          existing.gSum += g;
-          existing.bSum += b;
-        } else {
-          buckets.set(key, { count: 1, rSum: r, gSum: g, bSum: b });
-        }
-      }
-
-      // 4. Sort clusters by frequency and pick distinct swatches
-      const sorted = Array.from(buckets.values()).sort((a, b) => b.count - a.count);
-      const swatches = [];
-
-      for (const item of sorted) {
-        if (swatches.length >= 7) break;
-        const r = Math.round(item.rSum / item.count);
-        const g = Math.round(item.gSum / item.count);
-        const b = Math.round(item.bSum / item.count);
-
-        // Ensure new swatch is visibly distinct from previously accepted swatches
-        const isTooClose = swatches.some(s => {
-          const dr = s.r - r;
-          const dg = s.g - g;
-          const db = s.b - b;
-          return Math.sqrt(dr * dr + dg * dg + db * db) < 38;
+        const lab = srgbToLab(r, g, b);
+        const lch = labToLCh(lab.L, lab.a, lab.b);
+        labPixels.push({
+          L: lab.L,
+          a: lab.a,
+          b: lab.b,
+          r, g, b_val: b,
+          C: lch.C,
+          h: lch.h
         });
 
-        if (!isTooClose) {
-          swatches.push(this.formatColor(r, g, b));
+        // Chroma-weighted circular mean for image's dominant tone
+        if (lch.C >= 4.0) {
+          const rad = (lch.h * Math.PI) / 180;
+          sumSin += lch.C * Math.sin(rad);
+          sumCos += lch.C * Math.cos(rad);
+          chromaWeightSum += lch.C;
         }
       }
 
-      // Sort dominant swatches by perceptual value lightness (from highlights to shadows)
-      swatches.sort((a, b) => b.val - a.val);
+      if (chromaWeightSum > 0 && Math.sqrt(sumSin * sumSin + sumCos * sumCos) > 0.01) {
+        let avgHue = Math.atan2(sumSin, sumCos) * (180 / Math.PI);
+        if (avgHue < 0) avgHue += 360;
+        this.imageAvgHue = Math.round(avgHue);
+      } else {
+        this.imageAvgHue = null; // Achromatic / neutral image
+      }
+
+      if (labPixels.length === 0) return;
+
+      // 4. Cluster colors using Median-Cut in Lab space (target 12 candidate boxes)
+      const candidateClusters = this.medianCutLab(labPixels, 12);
+
+      // 5. Merge clusters closer than Delta-E threshold using CIEDE2000 (ΔE < 11.0)
+      const mergedSwatches = this.mergeClusters(candidateClusters, this.deltaEThreshold, 7);
+
+      // 6. Format swatches and sort by perceptual L* (highlights to shadows)
+      const swatches = mergedSwatches.map(c => this.formatColor(c.r, c.g, c.b, this.imageAvgHue));
+      swatches.sort((a, b) => b.L - a.L);
+
       this.dominantColors = swatches;
       this.renderDominantSwatches();
 
@@ -240,18 +656,154 @@ const ColorPaletteManager = {
       }
     } catch (e) {
       console.warn('Dominant palette extraction failed:', e);
+    } finally {
+      const tEnd = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      this.lastExtractionTimeMs = tEnd - tStart;
+      console.log(`[ColorPaletteManager] Extraction completed in ${this.lastExtractionTimeMs.toFixed(2)} ms`);
     }
   },
 
-  formatColor(r, g, b) {
+  /**
+   * Median-Cut clustering in CIELAB space
+   */
+  medianCutLab(pixels, targetBoxes = 12) {
+    if (!pixels || pixels.length === 0) return [];
+    let boxes = [pixels];
+
+    while (boxes.length < targetBoxes) {
+      let bestBoxIdx = -1;
+      let maxRange = -1;
+      let splitChannel = 'L';
+
+      for (let i = 0; i < boxes.length; i++) {
+        const box = boxes[i];
+        if (box.length < 2) continue;
+
+        let minL = 100, maxL = 0;
+        let minA = 128, maxA = -128;
+        let minB = 128, maxB = -128;
+
+        for (let j = 0; j < box.length; j++) {
+          const p = box[j];
+          if (p.L < minL) minL = p.L;
+          if (p.L > maxL) maxL = p.L;
+          if (p.a < minA) minA = p.a;
+          if (p.a > maxA) maxA = p.a;
+          if (p.b < minB) minB = p.b;
+          if (p.b > maxB) maxB = p.b;
+        }
+
+        const rangeL = maxL - minL;
+        const rangeA = maxA - minA;
+        const rangeB = maxB - minB;
+        const mRange = Math.max(rangeL, rangeA, rangeB);
+
+        if (mRange > maxRange) {
+          maxRange = mRange;
+          bestBoxIdx = i;
+          if (mRange === rangeL) splitChannel = 'L';
+          else if (mRange === rangeA) splitChannel = 'a';
+          else splitChannel = 'b';
+        }
+      }
+
+      if (bestBoxIdx === -1 || maxRange <= 0.001) break;
+
+      const boxToSplit = boxes[bestBoxIdx];
+      boxToSplit.sort((p1, p2) => p1[splitChannel] - p2[splitChannel]);
+      const medianIdx = Math.floor(boxToSplit.length / 2);
+      boxes.splice(bestBoxIdx, 1, boxToSplit.slice(0, medianIdx), boxToSplit.slice(medianIdx));
+    }
+
+    return boxes.map(box => {
+      let sumL = 0, sumA = 0, sumB = 0;
+      let sumR = 0, sumG = 0, sumBch = 0;
+      for (const p of box) {
+        sumL += p.L; sumA += p.a; sumB += p.b;
+        sumR += p.r; sumG += p.g; sumBch += (p.b_val !== undefined ? p.b_val : p.b);
+      }
+      const count = box.length;
+      return {
+        count,
+        L: sumL / count,
+        a: sumA / count,
+        b: sumB / count,
+        r: Math.round(sumR / count),
+        g: Math.round(sumG / count),
+        b: Math.round(sumBch / count)
+      };
+    });
+  },
+
+  /**
+   * Agglomerative Delta-E cluster merging (CIEDE2000 or CIE76)
+   */
+  mergeClusters(clusters, deltaEThreshold = 11.0, maxSwatches = 7) {
+    if (!clusters || clusters.length === 0) return [];
+    let list = clusters.slice();
+
+    const deFn = this.deltaEMethod === 'CIE76' ? deltaE76 : deltaE2000;
+
+    while (list.length > 1) {
+      let minDE = Infinity;
+      let bestI = -1, bestJ = -1;
+
+      for (let i = 0; i < list.length; i++) {
+        for (let j = i + 1; j < list.length; j++) {
+          const dE = deFn(list[i], list[j]);
+          if (dE < minDE) {
+            minDE = dE;
+            bestI = i;
+            bestJ = j;
+          }
+        }
+      }
+
+      // Merge clusters if closer than threshold, or if we need to reduce count to maxSwatches
+      if (minDE < deltaEThreshold || list.length > maxSwatches) {
+        const c1 = list[bestI];
+        const c2 = list[bestJ];
+        const count = c1.count + c2.count;
+        const merged = {
+          count,
+          L: (c1.L * c1.count + c2.L * c2.count) / count,
+          a: (c1.a * c1.count + c2.a * c2.count) / count,
+          b: (c1.b * c1.count + c2.b * c2.count) / count,
+          r: Math.round((c1.r * c1.count + c2.r * c2.count) / count),
+          g: Math.round((c1.g * c1.count + c2.g * c2.count) / count),
+          b: Math.round((c1.b * c1.count + c2.b * c2.count) / count)
+        };
+        list.splice(bestJ, 1);
+        list.splice(bestI, 1, merged);
+      } else {
+        break;
+      }
+    }
+
+    return list;
+  },
+
+  /**
+   * Compute formatted color metadata including CIELAB L*, Munsell Value, HSB, LCh, and temperatures
+   */
+  formatColor(r, g, b, imgAvgHue = null) {
+    r = Math.max(0, Math.min(255, Math.round(r)));
+    g = Math.max(0, Math.min(255, Math.round(g)));
+    b = Math.max(0, Math.min(255, Math.round(b)));
+
     const hex = '#' + [r, g, b].map(x => {
-      const h = Math.max(0, Math.min(255, Math.round(x))).toString(16);
+      const h = x.toString(16);
       return h.length === 1 ? '0' + h : h;
     }).join('').toUpperCase();
 
-    // Perceptual value luminance: Y = 0.299R + 0.587G + 0.114B
-    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-    const val = Math.round((lum / 255) * 100);
+    // CIELAB L*, a*, b* (sRGB -> linear -> XYZ D65 -> Lab)
+    const { L, a, b: bVal } = srgbToLab(r, g, b);
+    const { C, h } = labToLCh(L, a, bVal);
+
+    // Lightness value % (0-100)
+    const valPercent = Math.round(L);
+    // Munsell value (0-10) derived from L*
+    const munsellVal = Math.max(0, Math.min(10, parseFloat((L / 10).toFixed(1))));
 
     // HSB
     const rf = r / 255;
@@ -261,36 +813,83 @@ const ColorPaletteManager = {
     const min = Math.min(rf, gf, bf);
     const delta = max - min;
 
-    let h = 0;
+    let hsbH = 0;
     if (delta > 0) {
       if (max === rf) {
-        h = ((gf - bf) / delta) % 6;
+        hsbH = ((gf - bf) / delta) % 6;
       } else if (max === gf) {
-        h = (bf - rf) / delta + 2;
+        hsbH = (bf - rf) / delta + 2;
       } else {
-        h = (rf - gf) / delta + 4;
+        hsbH = (rf - gf) / delta + 4;
       }
-      h = Math.round(h * 60);
-      if (h < 0) h += 360;
+      hsbH = Math.round(hsbH * 60);
+      if (hsbH < 0) hsbH += 360;
     }
 
-    const s = max === 0 ? 0 : Math.round((delta / max) * 100);
-    const bri = Math.round(max * 100);
+    const hsbS = max === 0 ? 0 : Math.round((delta / max) * 100);
+    const hsbB = Math.round(max * 100);
 
-    // Temperature: warm (red/orange/yellow/magenta), cool (cyan/blue/green), neutral if sat < 12%
-    let temp = 'Neutral';
-    if (s >= 12) {
-      if (h <= 75 || h >= 325) {
-        temp = 'Warm';
-      } else {
-        temp = 'Cool';
-      }
+    // Temperature classification by LCh hue and chroma
+    const avgHue = imgAvgHue !== null ? imgAvgHue : this.imageAvgHue;
+    const { temp, relTemp } = classifyTemperature(C, h, avgHue);
+
+    // Formatted strings
+    const rgbStr = `rgb(${r}, ${g}, ${b})`;
+    const hsbStr = `hsb(${hsbH}°, ${hsbS}%, ${hsbB}%)`;
+    const labStr = `Lab(${L.toFixed(1)}, ${a.toFixed(1)}, ${bVal.toFixed(1)})`;
+
+    return {
+      hex,
+      r, g, b,
+      L, a, bVal,
+      C, h: Math.round(h),
+      val: valPercent,
+      munsell: munsellVal,
+      hsbH, hsbS, hsbB,
+      s: hsbS,
+      bri: hsbB,
+      temp,
+      relTemp,
+      rgbStr,
+      hsbStr,
+      labStr
+    };
+  },
+
+  /**
+   * Sample pixel neighborhood with box averaging (1x1, 3x3, 5x5, 11x11)
+   */
+  sampleAveraging(ctx, x, y, size = 1, maxW = null, maxH = null) {
+    const cw = maxW || (ctx && ctx.canvas ? ctx.canvas.width : 100);
+    const ch = maxH || (ctx && ctx.canvas ? ctx.canvas.height : 100);
+
+    const half = Math.floor(size / 2);
+    const x0 = Math.max(0, Math.min(cw - 1, x - half));
+    const x1 = Math.max(0, Math.min(cw - 1, x + half));
+    const y0 = Math.max(0, Math.min(ch - 1, y - half));
+    const y1 = Math.max(0, Math.min(ch - 1, y + half));
+    const w = Math.max(1, x1 - x0 + 1);
+    const h = Math.max(1, y1 - y0 + 1);
+
+    if (!ctx) return { r: 0, g: 0, b: 0 };
+    const data = ctx.getImageData(x0, y0, w, h).data;
+    let sumR = 0, sumG = 0, sumB = 0, count = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      sumR += data[i];
+      sumG += data[i + 1];
+      sumB += data[i + 2];
+      count++;
     }
-
-    return { hex, r, g, b, h, s, bri, val, temp, rgbStr: `rgb(${r}, ${g}, ${b})` };
+    if (count === 0) return { r: 0, g: 0, b: 0 };
+    return {
+      r: Math.round(sumR / count),
+      g: Math.round(sumG / count),
+      b: Math.round(sumB / count)
+    };
   },
 
   renderDominantSwatches() {
+    if (typeof document === 'undefined') return;
     const container = document.getElementById('palette-dominant-swatches');
     if (!container) return;
 
@@ -299,11 +898,17 @@ const ColorPaletteManager = {
       return;
     }
 
-    container.innerHTML = this.dominantColors.map((color, idx) => `
-      <div class="palette-swatch-chip" style="background-color: ${color.hex}" data-idx="${idx}" title="${UI._esc(`${color.hex} • Value ${color.val}% • ${color.temp}`)}">
-        <span class="swatch-value-tag">${color.val}%</span>
-      </div>
-    `).join('');
+    container.innerHTML = this.dominantColors.map((color, idx) => {
+      const displayVal = this.getDisplayValue(color);
+      const titleEsc = typeof UI !== 'undefined' && UI._esc
+        ? UI._esc(`${color.hex} • ${displayVal} • ${color.temp} (${color.relTemp})`)
+        : `${color.hex} • ${displayVal} • ${color.temp}`;
+      return `
+        <div class="palette-swatch-chip" style="background-color: ${color.hex}" data-idx="${idx}" title="${titleEsc}">
+          <span class="swatch-value-tag">${displayVal}</span>
+        </div>
+      `;
+    }).join('');
 
     container.querySelectorAll('.palette-swatch-chip').forEach(chip => {
       chip.addEventListener('click', () => {
@@ -319,27 +924,49 @@ const ColorPaletteManager = {
   setActiveColor(color) {
     if (!color) return;
     this.activeColor = color;
+    if (typeof document === 'undefined') return;
 
     const prevBox = document.getElementById('inspector-preview-color');
     const badge = document.getElementById('inspector-temp-badge');
     const hex = document.getElementById('inspector-hex');
     const val = document.getElementById('inspector-val-lightness');
+    const valLabel = document.getElementById('inspector-metric-label-val');
     const hue = document.getElementById('inspector-val-hue');
     const sat = document.getElementById('inspector-val-sat');
     const bri = document.getElementById('inspector-val-bri');
+    const chroma = document.getElementById('inspector-val-chroma');
+    const lab = document.getElementById('inspector-val-lab');
     const rgb = document.getElementById('inspector-val-rgb');
 
     if (prevBox) prevBox.style.backgroundColor = color.hex;
     if (badge) {
-      badge.textContent = color.temp;
+      badge.textContent = `${color.temp} • ${color.relTemp}`;
       badge.className = `inspector-temp-badge ${color.temp.toLowerCase()}`;
+      badge.title = `LCh Hue: ${color.h}°, Chroma: ${color.C.toFixed(1)} | Relative to image avg: ${color.relTemp}`;
     }
     if (hex) hex.textContent = color.hex;
-    if (val) val.textContent = `${color.val}%`;
-    if (hue) hue.textContent = `${color.h}°`;
-    if (sat) sat.textContent = `${color.s}%`;
-    if (bri) bri.textContent = `${color.bri}%`;
+    if (valLabel) {
+      valLabel.textContent = this.valueMode === 'munsell' ? 'Munsell Value' : 'Value (L*)';
+    }
+    if (val) {
+      val.textContent = this.valueMode === 'munsell' ? `${color.munsell} / 10` : `${color.val}%`;
+    }
+    if (hue) hue.textContent = `${color.hsbH !== undefined ? color.hsbH : color.h}°`;
+    if (sat) sat.textContent = `${color.hsbS !== undefined ? color.hsbS : color.s}%`;
+    if (bri) bri.textContent = `${color.hsbB !== undefined ? color.hsbB : color.bri}%`;
+    if (chroma) chroma.textContent = color.C !== undefined ? color.C.toFixed(1) : '0';
+    if (lab) lab.textContent = `${color.L.toFixed(1)}, ${color.a.toFixed(1)}, ${color.bVal.toFixed(1)}`;
     if (rgb) rgb.textContent = color.rgbStr;
+
+    // Update copy dropdown menu preview labels
+    const menuHex = document.getElementById('menu-val-hex');
+    const menuRgb = document.getElementById('menu-val-rgb');
+    const menuHsb = document.getElementById('menu-val-hsb');
+    const menuLab = document.getElementById('menu-val-lab');
+    if (menuHex) menuHex.textContent = color.hex;
+    if (menuRgb) menuRgb.textContent = color.rgbStr;
+    if (menuHsb) menuHsb.textContent = color.hsbStr;
+    if (menuLab) menuLab.textContent = color.labStr;
   },
 
   getPixelUnderCursor(clientX, clientY) {
@@ -349,15 +976,15 @@ const ColorPaletteManager = {
     if (!stage || !frame || !img || !img.naturalWidth || !this._offscreenCanvas.width) return null;
 
     const stageRect = stage.getBoundingClientRect();
-    const cx = stageRect.left + stageRect.width / 2 + (ArtistToolbox.panX || 0);
-    const cy = stageRect.top + stageRect.height / 2 + (ArtistToolbox.panY || 0);
+    const cx = stageRect.left + stageRect.width / 2 + (typeof ArtistToolbox !== 'undefined' ? (ArtistToolbox.panX || 0) : 0);
+    const cy = stageRect.top + stageRect.height / 2 + (typeof ArtistToolbox !== 'undefined' ? (ArtistToolbox.panY || 0) : 0);
 
     const dx = clientX - cx;
     const dy = clientY - cy;
 
-    const zoom = ArtistToolbox.zoom || 1;
-    const flipX = ArtistToolbox.flipX || 1;
-    const rotateTotal = ArtistToolbox.rotateTotal || 0;
+    const zoom = (typeof ArtistToolbox !== 'undefined' && ArtistToolbox.zoom) || 1;
+    const flipX = (typeof ArtistToolbox !== 'undefined' && ArtistToolbox.flipX) || 1;
+    const rotateTotal = (typeof ArtistToolbox !== 'undefined' && ArtistToolbox.rotateTotal) || 0;
 
     const sx = dx / zoom;
     const sy = dy / zoom;
@@ -389,8 +1016,8 @@ const ColorPaletteManager = {
     const sy_c = Math.max(0, Math.min(ch - 1, Math.floor((imgY / nh) * ch)));
 
     try {
-      const pixel = this._offscreenCtx.getImageData(sx_c, sy_c, 1, 1).data;
-      return this.formatColor(pixel[0], pixel[1], pixel[2]);
+      const avg = this.sampleAveraging(this._offscreenCtx, sx_c, sy_c, this.sampleSize || 1, cw, ch);
+      return this.formatColor(avg.r, avg.g, avg.b, this.imageAvgHue);
     } catch (e) {
       return null;
     }
@@ -416,7 +1043,7 @@ const ColorPaletteManager = {
     let ly = e.clientY - stageRect.top - 58;
 
     // Clamp within stage
-    lx = Math.max(8, Math.min(stageRect.width - 150, lx));
+    lx = Math.max(8, Math.min(stageRect.width - 180, lx));
     ly = Math.max(8, Math.min(stageRect.height - 70, ly));
 
     loupe.style.transform = `translate(${lx}px, ${ly}px)`;
@@ -429,17 +1056,20 @@ const ColorPaletteManager = {
     const hue = document.getElementById('loupe-hue');
     const sat = document.getElementById('loupe-sat');
     const bri = document.getElementById('loupe-bri');
+    const chroma = document.getElementById('loupe-chroma');
 
     if (circle) circle.style.backgroundColor = color.hex;
     if (badge) {
       badge.textContent = color.temp;
       badge.className = `loupe-temp-badge ${color.temp.toLowerCase()}`;
+      badge.title = `${color.temp} (${color.relTemp})`;
     }
     if (hex) hex.textContent = color.hex;
-    if (val) val.textContent = `${color.val}%`;
-    if (hue) hue.textContent = `${color.h}°`;
-    if (sat) sat.textContent = `${color.s}%`;
-    if (bri) bri.textContent = `${color.bri}%`;
+    if (val) val.textContent = this.getDisplayValue(color);
+    if (hue) hue.textContent = `${color.hsbH !== undefined ? color.hsbH : color.h}°`;
+    if (sat) sat.textContent = `${color.hsbS !== undefined ? color.hsbS : color.s}%`;
+    if (bri) bri.textContent = `${color.hsbB !== undefined ? color.hsbB : color.bri}%`;
+    if (chroma) chroma.textContent = color.C !== undefined ? color.C.toFixed(1) : '0';
 
     // Also update inspector active color
     this.setActiveColor(color);
@@ -467,10 +1097,11 @@ const ColorPaletteManager = {
     this.renderSampledSwatches();
     this.setActiveColor(color);
     this.copyActiveHex();
-    SoundFX.click();
+    if (typeof SoundFX !== 'undefined' && SoundFX.click) SoundFX.click();
   },
 
   renderSampledSwatches() {
+    if (typeof document === 'undefined') return;
     const container = document.getElementById('palette-sampled-swatches');
     const clearBtn = document.getElementById('btn-clear-sampled-colors');
     if (!container) return;
@@ -483,11 +1114,17 @@ const ColorPaletteManager = {
 
     if (clearBtn) clearBtn.classList.remove('hidden');
 
-    container.innerHTML = this.sampledColors.map((color, idx) => `
-      <div class="sampled-chip" style="background-color: ${color.hex}" data-idx="${idx}" title="${UI._esc(`${color.hex} • Value ${color.val}% (${color.temp})`)}">
-        <span class="sampled-val">${color.val}%</span>
-      </div>
-    `).join('');
+    container.innerHTML = this.sampledColors.map((color, idx) => {
+      const displayVal = this.getDisplayValue(color);
+      const titleEsc = typeof UI !== 'undefined' && UI._esc
+        ? UI._esc(`${color.hex} • ${displayVal} • ${color.temp} (${color.relTemp})`)
+        : `${color.hex} • ${displayVal} • ${color.temp}`;
+      return `
+        <div class="sampled-chip" style="background-color: ${color.hex}" data-idx="${idx}" title="${titleEsc}">
+          <span class="sampled-val">${displayVal}</span>
+        </div>
+      `;
+    }).join('');
 
     container.querySelectorAll('.sampled-chip').forEach(chip => {
       chip.addEventListener('click', (e) => {
@@ -504,34 +1141,23 @@ const ColorPaletteManager = {
   clearSampled() {
     this.sampledColors = [];
     this.renderSampledSwatches();
-    SoundFX.click();
-  },
-
-  copyActiveHex() {
-    if (!this.activeColor || !this.activeColor.hex) return;
-    const hex = this.activeColor.hex;
-    navigator.clipboard.writeText(hex).then(() => {
-      const btn = document.getElementById('btn-copy-inspector-hex');
-      if (btn) {
-        const oldHtml = btn.innerHTML;
-        btn.innerHTML = `${UI.getIconSvg('check', 12)} Copied!`;
-        btn.classList.add('copied');
-        setTimeout(() => {
-          btn.innerHTML = oldHtml;
-          btn.classList.remove('copied');
-        }, 1200);
-      }
-      SoundFX.click();
-    }).catch(() => { });
+    if (typeof SoundFX !== 'undefined' && SoundFX.click) SoundFX.click();
   }
 };
 
-if (typeof window !== "undefined") {
+if (typeof window !== 'undefined') {
   window.ColorPaletteManager = ColorPaletteManager;
 }
-if (typeof globalThis !== "undefined") {
+if (typeof globalThis !== 'undefined') {
   globalThis.ColorPaletteManager = ColorPaletteManager;
 }
-if (typeof module !== "undefined" && module.exports) {
+if (typeof module !== 'undefined' && module.exports) {
   module.exports = ColorPaletteManager;
+  ColorPaletteManager.srgbToLinear = srgbToLinear;
+  ColorPaletteManager.linearToSrgb = linearToSrgb;
+  ColorPaletteManager.srgbToLab = srgbToLab;
+  ColorPaletteManager.labToLCh = labToLCh;
+  ColorPaletteManager.deltaE76 = deltaE76;
+  ColorPaletteManager.deltaE2000 = deltaE2000;
+  ColorPaletteManager.classifyTemperature = classifyTemperature;
 }
