@@ -444,6 +444,237 @@ function posterizeImageDataToBands(srcData, dstData, numBands = 3) {
   return dstData;
 }
 
+// ==================== CIELAB LCh COLOR WHEEL & GAMUT MASK SCIENCE ====================
+
+/**
+ * Convert CIELAB LCh(ab) to sRGB {r, g, b} under D65
+ */
+function lchToSrgb(L, C, h) {
+  const rad = (h * Math.PI) / 180;
+  const a = C * Math.cos(rad);
+  const b = C * Math.sin(rad);
+
+  const fy = (L + 16) / 116;
+  const fx = a / 500 + fy;
+  const fz = fy - b / 200;
+
+  const eps = 216 / 24389;
+  const kappa = 24389 / 27;
+
+  const xr = Math.pow(fx, 3) > eps ? Math.pow(fx, 3) : (116 * fx - 16) / kappa;
+  const yr = L > 8 ? Math.pow(fy, 3) : L / kappa;
+  const zr = Math.pow(fz, 3) > eps ? Math.pow(fz, 3) : (116 * fz - 16) / kappa;
+
+  const X = xr * 0.95047;
+  const Y = yr * 1.00000;
+  const Z = zr * 1.08883;
+
+  const rl =  3.2404542 * X - 1.5371385 * Y - 0.4985314 * Z;
+  const gl = -0.9692660 * X + 1.8760108 * Y + 0.0415560 * Z;
+  const bl =  0.0556434 * X - 0.2040259 * Y + 1.0572252 * Z;
+
+  return {
+    r: linearToSrgb(Math.max(0, Math.min(1, rl))),
+    g: linearToSrgb(Math.max(0, Math.min(1, gl))),
+    b: linearToSrgb(Math.max(0, Math.min(1, bl)))
+  };
+}
+
+/**
+ * Map CIELAB Chroma C* and Hue h to canvas wheel coordinates (cx, cy, R)
+ * Standard layout confirmed by user:
+ * 0° Red (+a*, 3 o'clock / Right)
+ * 90° Yellow (+b*, 12 o'clock / Top)
+ * 180° Cyan (-a*, 9 o'clock / Left)
+ * 270° Blue (-b*, 6 o'clock / Bottom)
+ * radius = clamp(C* / maxChroma, 0, 1)
+ */
+function lchToWheelCoords(C, h, cx, cy, R, maxChroma = 120) {
+  const rNorm = Math.min(1, Math.max(0, C / maxChroma));
+  const rho = rNorm * R;
+  const rad = (h * Math.PI) / 180;
+  const x = cx + rho * Math.cos(rad);
+  const y = cy - rho * Math.sin(rad); // screen Y is inverted relative to Cartesian
+  return { x, y };
+}
+
+/**
+ * Map canvas wheel coordinates back to CIELAB (C*, h)
+ */
+function wheelCoordsToLch(x, y, cx, cy, R, maxChroma = 120) {
+  const dx = x - cx;
+  const dy = cy - y;
+  const rho = Math.sqrt(dx * dx + dy * dy);
+  const rNorm = Math.min(1, rho / R);
+  const C = rNorm * maxChroma;
+  let h = (Math.atan2(dy, dx) * 180) / Math.PI;
+  if (h < 0) h += 360;
+  return { C, h };
+}
+
+/**
+ * Andrew's Monotone Chain 2D Convex Hull Algorithm
+ * Returns the counter-clockwise convex polygon vertices for an array of 2D points [{x, y}, ...].
+ */
+function convexHull(points) {
+  if (!points || points.length <= 1) return points ? points.slice() : [];
+
+  // Sort primarily by x, secondarily by y
+  const pts = points.slice().sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x));
+
+  // Cross product of OA and OB vectors (> 0 for strictly CCW turn)
+  function cross(o, a, b) {
+    return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  }
+
+  // Build lower hull
+  const lower = [];
+  for (const p of pts) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) {
+      lower.pop();
+    }
+    lower.push(p);
+  }
+
+  // Build upper hull
+  const upper = [];
+  for (let i = pts.length - 1; i >= 0; i--) {
+    const p = pts[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) {
+      upper.pop();
+    }
+    upper.push(p);
+  }
+
+  // Pop duplicated end points
+  lower.pop();
+  upper.pop();
+
+  // If all points were collinear or only single point remains
+  if (lower.length === 0 && upper.length > 0) return upper;
+  if (upper.length === 0 && lower.length > 0) return lower;
+  return lower.concat(upper);
+}
+
+/**
+ * Outlier filtering: retain dominant percentile (e.g. 90%) of points around geometric centroid
+ */
+function filterDominantPoints(points, percentile = 0.90) {
+  if (!points || points.length <= 3) return points ? points.slice() : [];
+
+  let sumX = 0, sumY = 0;
+  for (const p of points) {
+    sumX += p.x;
+    sumY += p.y;
+  }
+  const cx = sumX / points.length;
+  const cy = sumY / points.length;
+
+  const withDist = points.map(p => ({
+    p,
+    d2: (p.x - cx) * (p.x - cx) + (p.y - cy) * (p.y - cy)
+  }));
+  withDist.sort((a, b) => a.d2 - b.d2);
+
+  const count = Math.max(3, Math.min(points.length, Math.ceil(points.length * percentile)));
+  return withDist.slice(0, count).map(item => item.p);
+}
+
+/**
+ * Ray Casting point-in-polygon test (Jordan curve theorem)
+ * Returns true if point {x, y} lies inside polygon [{x, y}, ...]
+ */
+function isPointInPolygon(point, polygon) {
+  if (!polygon || polygon.length < 3) return false;
+  const x = point.x, y = point.y;
+  let inside = false;
+
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i].x, yi = polygon[i].y;
+    const xj = polygon[j].x, yj = polygon[j].y;
+
+    const intersect = ((yi > y) !== (yj > y)) &&
+      (x < ((xj - xi) * (y - yi)) / (yj - yi) + xi);
+    if (intersect) inside = !inside;
+  }
+
+  return inside;
+}
+
+/**
+ * Compute drift score = percent of sketch pixels outside reference gamut mask polygon
+ */
+function calculateDriftScore(sketchPoints, polygon) {
+  if (!sketchPoints || sketchPoints.length === 0 || !polygon || polygon.length < 3) {
+    return 0;
+  }
+  let outsideCount = 0;
+  for (const pt of sketchPoints) {
+    if (!isPointInPolygon(pt, polygon)) {
+      outsideCount++;
+    }
+  }
+  return Math.round((outsideCount / sketchPoints.length) * 100);
+}
+
+/**
+ * Compute ratio of mean sketch chroma to mean reference chroma
+ */
+function calculateMeanChromaRatio(refPoints, sketchPoints) {
+  if (!refPoints || refPoints.length === 0 || !sketchPoints || sketchPoints.length === 0) {
+    return 1.0;
+  }
+  const sumRef = refPoints.reduce((acc, p) => acc + (p.C !== undefined ? p.C : 0), 0);
+  const sumSketch = sketchPoints.reduce((acc, p) => acc + (p.C !== undefined ? p.C : 0), 0);
+  const meanRef = sumRef / refPoints.length;
+  const meanSketch = sumSketch / sketchPoints.length;
+
+  if (meanRef <= 0.001) return 1.0;
+  return parseFloat((meanSketch / meanRef).toFixed(2));
+}
+
+/**
+ * Spatial 2D grid binning for density-weighted dot scatter plot
+ */
+function binPoints(points, binSize = 4) {
+  if (!points || points.length === 0) return [];
+  const bins = new Map();
+  let maxCount = 0;
+
+  for (const p of points) {
+    const bx = Math.floor(p.x / binSize);
+    const by = Math.floor(p.y / binSize);
+    const key = `${bx}_${by}`;
+    let bin = bins.get(key);
+    if (!bin) {
+      bin = { sumX: 0, sumY: 0, sumR: 0, sumG: 0, sumB: 0, count: 0 };
+      bins.set(key, bin);
+    }
+    bin.sumX += p.x;
+    bin.sumY += p.y;
+    bin.sumR += (p.r || 0);
+    bin.sumG += (p.g || 0);
+    bin.sumB += (p.b || 0);
+    bin.count++;
+    if (bin.count > maxCount) maxCount = bin.count;
+  }
+
+  const result = [];
+  for (const bin of bins.values()) {
+    result.push({
+      x: bin.sumX / bin.count,
+      y: bin.sumY / bin.count,
+      r: Math.round(bin.sumR / bin.count),
+      g: Math.round(bin.sumG / bin.count),
+      b: Math.round(bin.sumB / bin.count),
+      count: bin.count,
+      dotRadius: Math.min(5.5, 1.2 + Math.log2(bin.count + 1) * 0.55),
+      dotAlpha: Math.min(0.9, 0.28 + (bin.count / maxCount) * 0.62)
+    });
+  }
+  return result;
+}
+
 const ColorPaletteManager = {
   hudOpen: false,
   eyedropperActive: false,
@@ -472,6 +703,22 @@ const ColorPaletteManager = {
   _valCtx: null,
   _sketchValCanvas: null,
   _sketchValCtx: null,
+  gamutMaskVertices: [],
+  gamutMaskRawHull: [],
+  gamutRefPoints: [],
+  gamutSketchPoints: [],
+  gamutRefDensityBins: [],
+  gamutSketchDensityBins: [],
+  gamutDriftScore: null,
+  gamutChromaRatio: null,
+  draggedVertexIndex: -1,
+  hoveredVertexIndex: -1,
+  _wheelCanvas: null,
+  _wheelCtx: null,
+  _wheelBgCanvas: null,
+  _wheelBgCtx: null,
+  _wheelSampleCanvas: null,
+  _wheelSampleCtx: null,
 
   get isOpen() {
     return this.hudOpen;
@@ -494,6 +741,7 @@ const ColorPaletteManager = {
       this.setupDraggable();
       this.bindEvents();
       this.updateUIModes();
+      this.initGamutWheel();
     }
   },
 
@@ -742,6 +990,18 @@ const ColorPaletteManager = {
     if (btnCompare) {
       btnCompare.addEventListener('click', () => this.toggleSketchCompare());
     }
+
+    // Gamut Mask tab
+    const tabGamut = document.getElementById('tab-palette-gamut');
+    if (tabGamut) {
+      tabGamut.addEventListener('click', () => this.setActiveTab('gamut'));
+    }
+
+    // Reset Gamut Mask button
+    const btnResetGamut = document.getElementById('btn-reset-gamut-mask');
+    if (btnResetGamut) {
+      btnResetGamut.addEventListener('click', () => this.resetGamutMask());
+    }
   },
 
   toggleCopyMenu(forceState = null) {
@@ -820,6 +1080,7 @@ const ColorPaletteManager = {
           this.extractPalette(img);
         }
         this.updateValueMapUI();
+        this.updateGamutMaskUI();
       }
     } else {
       if (this.eyedropperActive) {
@@ -852,6 +1113,8 @@ const ColorPaletteManager = {
     this.dominantColors = [];
     this.extractPalette(imgEl);
     this.updateValueMapUI();
+    this.gamutMaskVertices = []; // New image: recompute gamut mask
+    this.updateGamutMaskUI();
     if (this.valueMapOverlayActive) {
       this.renderValueMapOverlay();
     }
@@ -1448,22 +1711,28 @@ const ColorPaletteManager = {
   // ==================== VALUE MAP METHODS ====================
 
   setActiveTab(tab) {
-    if (tab !== 'harmony' && tab !== 'valuemap') return;
+    if (tab !== 'harmony' && tab !== 'valuemap' && tab !== 'gamut') return;
     this.valueMapActiveTab = tab;
 
     if (typeof document !== 'undefined') {
       const tabHarm = document.getElementById('tab-palette-harmony');
       const tabVal = document.getElementById('tab-palette-valuemap');
+      const tabGamut = document.getElementById('tab-palette-gamut');
       const viewHarm = document.getElementById('palette-view-harmony');
       const viewVal = document.getElementById('palette-view-valuemap');
+      const viewGamut = document.getElementById('palette-view-gamut');
 
       if (tabHarm) tabHarm.classList.toggle('active', tab === 'harmony');
       if (tabVal) tabVal.classList.toggle('active', tab === 'valuemap');
+      if (tabGamut) tabGamut.classList.toggle('active', tab === 'gamut');
       if (viewHarm) viewHarm.classList.toggle('hidden', tab !== 'harmony');
       if (viewVal) viewVal.classList.toggle('hidden', tab !== 'valuemap');
+      if (viewGamut) viewGamut.classList.toggle('hidden', tab !== 'gamut');
 
       if (tab === 'valuemap') {
         this.updateValueMapUI();
+      } else if (tab === 'gamut') {
+        this.updateGamutMaskUI();
       }
     }
     if (typeof SoundFX !== 'undefined' && SoundFX.click) SoundFX.click();
@@ -1531,6 +1800,7 @@ const ColorPaletteManager = {
     if (this.valueMapCompareSketch) {
       this.updateValueMapUI();
     }
+    this.updateGamutMaskUI();
   },
 
   renderStackedBar(containerId, bands) {
@@ -1708,6 +1978,407 @@ const ColorPaletteManager = {
     } catch (e) {
       console.warn('[ColorPaletteManager] Failed to apply value map to context:', e);
     }
+  },
+
+  // ==================== GAMUT MASK METHODS ====================
+
+  initGamutWheel() {
+    if (typeof document === 'undefined') return;
+    const canvas = document.getElementById('gamut-wheel-canvas');
+    if (!canvas) return;
+    this._wheelCanvas = canvas;
+    this._wheelCtx = canvas.getContext('2d');
+
+    // Create offscreen buffer for continuous wheel background (280x280)
+    if (!this._wheelBgCanvas) {
+      this._wheelBgCanvas = document.createElement('canvas');
+      this._wheelBgCanvas.width = 280;
+      this._wheelBgCanvas.height = 280;
+      this._wheelBgCtx = this._wheelBgCanvas.getContext('2d');
+      this.renderWheelBackground(this._wheelBgCtx, 140, 140, 120);
+    }
+
+    // Create reused 128x128 offscreen sampling canvas
+    if (!this._wheelSampleCanvas) {
+      this._wheelSampleCanvas = document.createElement('canvas');
+      this._wheelSampleCanvas.width = 128;
+      this._wheelSampleCanvas.height = 128;
+      this._wheelSampleCtx = this._wheelSampleCanvas.getContext('2d', { willReadFrequently: true });
+    }
+
+    // Pointer events for dragging mask vertices
+    canvas.addEventListener('pointerdown', (e) => this.onGamutPointerDown(e));
+    canvas.addEventListener('pointermove', (e) => this.onGamutPointerMove(e));
+    canvas.addEventListener('pointerup', (e) => this.onGamutPointerUp(e));
+    canvas.addEventListener('pointercancel', (e) => this.onGamutPointerUp(e));
+    canvas.addEventListener('pointerleave', (e) => this.onGamutPointerLeave(e));
+  },
+
+  renderWheelBackground(ctx, cx, cy, R) {
+    if (!ctx) return;
+    const imgData = ctx.createImageData(280, 280);
+    const d = imgData.data;
+
+    for (let py = 0; py < 280; py++) {
+      for (let px = 0; px < 280; px++) {
+        const dx = px - cx;
+        const dy = cy - py; // standard cartesian (+y up)
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const idx = (py * 280 + px) * 4;
+
+        if (dist <= R) {
+          const rNorm = dist / R;
+          const C = rNorm * 120;
+          let h = (Math.atan2(dy, dx) * 180) / Math.PI;
+          if (h < 0) h += 360;
+
+          const rgb = lchToSrgb(62, C, h);
+          d[idx] = rgb.r;
+          d[idx + 1] = rgb.g;
+          d[idx + 2] = rgb.b;
+          d[idx + 3] = 230;
+        } else if (dist <= R + 1.5) {
+          d[idx] = 40; d[idx + 1] = 40; d[idx + 2] = 40;
+          d[idx + 3] = Math.round((R + 1.5 - dist) * 180);
+        } else {
+          d[idx + 3] = 0;
+        }
+      }
+    }
+    ctx.putImageData(imgData, 0, 0);
+
+    // Subtle 12 radial sector lines (30 deg intervals)
+    ctx.save();
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.22)';
+    ctx.lineWidth = 1;
+    for (let deg = 0; deg < 360; deg += 30) {
+      const rad = (deg * Math.PI) / 180;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx + R * Math.cos(rad), cy - R * Math.sin(rad));
+      ctx.stroke();
+    }
+
+    // Concentric chroma rings (C* = 40, 80, 120)
+    const ringRadii = [R * (40 / 120), R * (80 / 120), R];
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.25)';
+    ctx.setLineDash([2, 3]);
+    for (let i = 0; i < ringRadii.length - 1; i++) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, ringRadii[i], 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(cx, cy, R, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Cardinal sector labels
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
+    ctx.font = 'bold 9px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('R', cx + R - 10, cy);
+    ctx.fillText('Y', cx, cy - R + 10);
+    ctx.fillText('C', cx - R + 10, cy);
+    ctx.fillText('B', cx, cy + R - 10);
+    ctx.restore();
+  },
+
+  updateGamutMaskUI() {
+    if (typeof document === 'undefined') return;
+    if (!this._wheelCanvas) this.initGamutWheel();
+    if (!this._wheelCanvas) return;
+
+    const refImg = document.getElementById('session-image');
+    if (!refImg || !refImg.complete || !refImg.naturalWidth) return;
+
+    const cx = 140, cy = 140, R = 120;
+
+    // 1. Downsample reference to 128x128
+    if (!this._wheelSampleCanvas) {
+      this._wheelSampleCanvas = document.createElement('canvas');
+      this._wheelSampleCanvas.width = 128;
+      this._wheelSampleCanvas.height = 128;
+      this._wheelSampleCtx = this._wheelSampleCanvas.getContext('2d', { willReadFrequently: true });
+    }
+    this._wheelSampleCtx.clearRect(0, 0, 128, 128);
+    this._wheelSampleCtx.drawImage(refImg, 0, 0, 128, 128);
+    const refImgData = this._wheelSampleCtx.getImageData(0, 0, 128, 128).data;
+
+    const refPoints = [];
+    for (let i = 0; i < refImgData.length; i += 4) {
+      if (refImgData[i + 3] < 128) continue;
+      const r = refImgData[i];
+      const g = refImgData[i + 1];
+      const b = refImgData[i + 2];
+      const lab = srgbToLab(r, g, b);
+      const lch = labToLCh(lab.L, lab.a, lab.b);
+      const pt = lchToWheelCoords(lch.C, lch.h, cx, cy, R, 120);
+      refPoints.push({
+        x: pt.x,
+        y: pt.y,
+        C: lch.C,
+        h: lch.h,
+        r, g, b
+      });
+    }
+    this.gamutRefPoints = refPoints;
+    this.gamutRefDensityBins = binPoints(refPoints, 4);
+
+    // 2. Compute convex hull around dominant 90% of reference points
+    const dominant = filterDominantPoints(refPoints, 0.90);
+    const hull = convexHull(dominant);
+    this.gamutMaskRawHull = hull;
+    if (!this.gamutMaskVertices || this.gamutMaskVertices.length === 0) {
+      this.gamutMaskVertices = hull.map(v => ({ x: v.x, y: v.y }));
+    }
+
+    // 3. Process sketch image if available
+    const sketchImg = document.getElementById('sketch-overlay-img');
+    const isSketchLoaded = sketchImg && sketchImg.src && sketchImg.complete && sketchImg.naturalWidth > 0;
+    const emptyHint = document.getElementById('gamut-empty-sketch-hint');
+
+    if (isSketchLoaded) {
+      this._wheelSampleCtx.clearRect(0, 0, 128, 128);
+      this._wheelSampleCtx.drawImage(sketchImg, 0, 0, 128, 128);
+      const sketchImgData = this._wheelSampleCtx.getImageData(0, 0, 128, 128).data;
+
+      const sketchPoints = [];
+      for (let i = 0; i < sketchImgData.length; i += 4) {
+        if (sketchImgData[i + 3] < 128) continue;
+        const r = sketchImgData[i];
+        const g = sketchImgData[i + 1];
+        const b = sketchImgData[i + 2];
+        const lab = srgbToLab(r, g, b);
+        const lch = labToLCh(lab.L, lab.a, lab.b);
+        const pt = lchToWheelCoords(lch.C, lch.h, cx, cy, R, 120);
+        sketchPoints.push({
+          x: pt.x,
+          y: pt.y,
+          C: lch.C,
+          h: lch.h,
+          r, g, b
+        });
+      }
+      this.gamutSketchPoints = sketchPoints;
+      this.gamutSketchDensityBins = binPoints(sketchPoints, 4);
+
+      this.gamutDriftScore = calculateDriftScore(sketchPoints, this.gamutMaskVertices);
+      this.gamutChromaRatio = calculateMeanChromaRatio(refPoints, sketchPoints);
+
+      if (emptyHint) emptyHint.classList.add('hidden');
+    } else {
+      this.gamutSketchPoints = [];
+      this.gamutSketchDensityBins = [];
+      this.gamutDriftScore = null;
+      this.gamutChromaRatio = null;
+      if (emptyHint) emptyHint.classList.remove('hidden');
+    }
+
+    this.renderGamutWheel();
+  },
+
+  renderGamutWheel() {
+    if (typeof document === 'undefined') return;
+    if (!this._wheelCtx || !this._wheelCanvas) return;
+    const ctx = this._wheelCtx;
+    const w = this._wheelCanvas.width;
+    const h = this._wheelCanvas.height;
+    ctx.clearRect(0, 0, w, h);
+
+    // 1. Draw continuous background wheel
+    if (this._wheelBgCanvas) {
+      ctx.drawImage(this._wheelBgCanvas, 0, 0);
+    }
+
+    // 2. Draw density-weighted reference dots
+    if (this.gamutRefDensityBins) {
+      for (const b of this.gamutRefDensityBins) {
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.dotRadius, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(${b.r}, ${b.g}, ${b.b}, ${b.dotAlpha})`;
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
+        ctx.lineWidth = 0.5;
+        ctx.stroke();
+      }
+    }
+
+    // 3. Draw gamut mask polygon
+    if (this.gamutMaskVertices && this.gamutMaskVertices.length >= 3) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(this.gamutMaskVertices[0].x, this.gamutMaskVertices[0].y);
+      for (let i = 1; i < this.gamutMaskVertices.length; i++) {
+        ctx.lineTo(this.gamutMaskVertices[i].x, this.gamutMaskVertices[i].y);
+      }
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(245, 158, 11, 0.16)';
+      ctx.fill();
+      ctx.strokeStyle = '#f59e0b';
+      ctx.lineWidth = 2.0;
+      ctx.stroke();
+      ctx.restore();
+
+      // Draw draggable vertex control handles
+      for (let i = 0; i < this.gamutMaskVertices.length; i++) {
+        const v = this.gamutMaskVertices[i];
+        const isHover = (i === this.hoveredVertexIndex);
+        const isDrag = (i === this.draggedVertexIndex);
+        const radius = isDrag ? 6.5 : (isHover ? 5.5 : 4.0);
+
+        ctx.beginPath();
+        ctx.arc(v.x, v.y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = isDrag ? '#ffffff' : (isHover ? '#fef08a' : '#f59e0b');
+        ctx.fill();
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+    }
+
+    // 4. Overlay sketch colors on same wheel (if available)
+    if (this.gamutSketchDensityBins && this.gamutSketchDensityBins.length > 0) {
+      for (const b of this.gamutSketchDensityBins) {
+        const isInside = this.gamutMaskVertices && this.gamutMaskVertices.length >= 3
+          ? isPointInPolygon(b, this.gamutMaskVertices)
+          : true;
+
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.dotRadius + 0.5, 0, Math.PI * 2);
+        if (isInside) {
+          ctx.strokeStyle = '#38bdf8';
+          ctx.fillStyle = 'rgba(56, 189, 248, 0.35)';
+        } else {
+          ctx.strokeStyle = '#ef4444';
+          ctx.fillStyle = 'rgba(239, 68, 68, 0.55)';
+        }
+        ctx.lineWidth = 1.5;
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+
+    // 5. Update stats DOM readouts
+    const driftEl = document.getElementById('gamut-drift-score');
+    const chromaEl = document.getElementById('gamut-chroma-ratio');
+
+    if (driftEl) {
+      if (this.gamutDriftScore !== null && this.gamutDriftScore !== undefined) {
+        driftEl.textContent = `${this.gamutDriftScore}%`;
+        driftEl.style.color = this.gamutDriftScore > 20 ? '#ef4444' : (this.gamutDriftScore > 5 ? '#f59e0b' : '#10b981');
+      } else {
+        driftEl.textContent = '—';
+        driftEl.style.color = '';
+      }
+    }
+    if (chromaEl) {
+      if (this.gamutChromaRatio !== null && this.gamutChromaRatio !== undefined) {
+        chromaEl.textContent = `${this.gamutChromaRatio.toFixed(2)}×`;
+      } else {
+        chromaEl.textContent = '—';
+      }
+    }
+  },
+
+  onGamutPointerDown(e) {
+    if (!this.gamutMaskVertices || this.gamutMaskVertices.length === 0) return;
+    const rect = this._wheelCanvas.getBoundingClientRect();
+    const scaleX = this._wheelCanvas.width / rect.width;
+    const scaleY = this._wheelCanvas.height / rect.height;
+    const px = (e.clientX - rect.left) * scaleX;
+    const py = (e.clientY - rect.top) * scaleY;
+
+    let closestIdx = -1;
+    let minD = 12;
+    for (let i = 0; i < this.gamutMaskVertices.length; i++) {
+      const v = this.gamutMaskVertices[i];
+      const d = Math.hypot(v.x - px, v.y - py);
+      if (d < minD) {
+        minD = d;
+        closestIdx = i;
+      }
+    }
+
+    if (closestIdx !== -1) {
+      this.draggedVertexIndex = closestIdx;
+      try { this._wheelCanvas.setPointerCapture(e.pointerId); } catch (err) {}
+      this.renderGamutWheel();
+    }
+  },
+
+  onGamutPointerMove(e) {
+    if (!this._wheelCanvas) return;
+    const rect = this._wheelCanvas.getBoundingClientRect();
+    const scaleX = this._wheelCanvas.width / rect.width;
+    const scaleY = this._wheelCanvas.height / rect.height;
+    const px = (e.clientX - rect.left) * scaleX;
+    const py = (e.clientY - rect.top) * scaleY;
+
+    if (this.draggedVertexIndex !== -1 && this.gamutMaskVertices[this.draggedVertexIndex]) {
+      const cx = 140, cy = 140, R = 120;
+      let dx = px - cx;
+      let dy = py - cy;
+      const dist = Math.hypot(dx, dy);
+      if (dist > R) {
+        dx = (dx / dist) * R;
+        dy = (dy / dist) * R;
+      }
+      this.gamutMaskVertices[this.draggedVertexIndex] = {
+        x: cx + dx,
+        y: cy + dy
+      };
+
+      if (this.gamutSketchPoints && this.gamutSketchPoints.length > 0) {
+        this.gamutDriftScore = calculateDriftScore(this.gamutSketchPoints, this.gamutMaskVertices);
+      }
+      this.renderGamutWheel();
+      return;
+    }
+
+    if (!this.gamutMaskVertices) return;
+    let hovered = -1;
+    for (let i = 0; i < this.gamutMaskVertices.length; i++) {
+      const v = this.gamutMaskVertices[i];
+      if (Math.hypot(v.x - px, v.y - py) <= 12) {
+        hovered = i;
+        break;
+      }
+    }
+    if (this.hoveredVertexIndex !== hovered) {
+      this.hoveredVertexIndex = hovered;
+      this._wheelCanvas.style.cursor = hovered !== -1 ? 'grab' : 'default';
+      this.renderGamutWheel();
+    }
+  },
+
+  onGamutPointerUp(e) {
+    if (this.draggedVertexIndex !== -1) {
+      this.draggedVertexIndex = -1;
+      try { this._wheelCanvas.releasePointerCapture(e.pointerId); } catch (err) {}
+      this.renderGamutWheel();
+    }
+  },
+
+  onGamutPointerLeave(e) {
+    if (this.draggedVertexIndex === -1 && this.hoveredVertexIndex !== -1) {
+      this.hoveredVertexIndex = -1;
+      if (this._wheelCanvas) this._wheelCanvas.style.cursor = 'default';
+      this.renderGamutWheel();
+    }
+  },
+
+  resetGamutMask() {
+    if (!this.gamutMaskRawHull || this.gamutMaskRawHull.length === 0) return;
+    this.gamutMaskVertices = this.gamutMaskRawHull.map(v => ({ x: v.x, y: v.y }));
+    if (this.gamutSketchPoints && this.gamutSketchPoints.length > 0) {
+      this.gamutDriftScore = calculateDriftScore(this.gamutSketchPoints, this.gamutMaskVertices);
+    }
+    this.renderGamutWheel();
+    if (typeof SoundFX !== 'undefined' && SoundFX.click) SoundFX.click();
   }
 };
 
@@ -1719,6 +2390,15 @@ ColorPaletteManager.calculateBandPercentages = calculateBandPercentages;
 ColorPaletteManager.computeValueBands = computeValueBands;
 ColorPaletteManager.generateDeltaNote = generateDeltaNote;
 ColorPaletteManager.posterizeImageDataToBands = posterizeImageDataToBands;
+ColorPaletteManager.lchToSrgb = lchToSrgb;
+ColorPaletteManager.lchToWheelCoords = lchToWheelCoords;
+ColorPaletteManager.wheelCoordsToLch = wheelCoordsToLch;
+ColorPaletteManager.convexHull = convexHull;
+ColorPaletteManager.filterDominantPoints = filterDominantPoints;
+ColorPaletteManager.isPointInPolygon = isPointInPolygon;
+ColorPaletteManager.calculateDriftScore = calculateDriftScore;
+ColorPaletteManager.calculateMeanChromaRatio = calculateMeanChromaRatio;
+ColorPaletteManager.binPoints = binPoints;
 
 if (typeof window !== 'undefined') {
   window.ColorPaletteManager = ColorPaletteManager;
@@ -1743,4 +2423,13 @@ if (typeof module !== 'undefined' && module.exports) {
   ColorPaletteManager.computeValueBands = computeValueBands;
   ColorPaletteManager.generateDeltaNote = generateDeltaNote;
   ColorPaletteManager.posterizeImageDataToBands = posterizeImageDataToBands;
+  ColorPaletteManager.lchToSrgb = lchToSrgb;
+  ColorPaletteManager.lchToWheelCoords = lchToWheelCoords;
+  ColorPaletteManager.wheelCoordsToLch = wheelCoordsToLch;
+  ColorPaletteManager.convexHull = convexHull;
+  ColorPaletteManager.filterDominantPoints = filterDominantPoints;
+  ColorPaletteManager.isPointInPolygon = isPointInPolygon;
+  ColorPaletteManager.calculateDriftScore = calculateDriftScore;
+  ColorPaletteManager.calculateMeanChromaRatio = calculateMeanChromaRatio;
+  ColorPaletteManager.binPoints = binPoints;
 }

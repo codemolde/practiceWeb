@@ -1288,12 +1288,14 @@
                 </div>
               </div>
 
-              <!-- View Tabs: Harmony vs Value Map -->
+              <!-- View Tabs: Harmony vs Value Map vs Gamut Mask -->
               <div class="palette-hud-tabs" role="tablist">
                 <button type="button" class="palette-hud-tab active" id="tab-palette-harmony" role="tab"
                   title="Dominant Palette & Lightness/Chroma Inspector">Palette & Harmony</button>
                 <button type="button" class="palette-hud-tab" id="tab-palette-valuemap" role="tab"
                   title="CIELAB L* Value Bands & Value Map Breakdown">Value Map</button>
+                <button type="button" class="palette-hud-tab" id="tab-palette-gamut" role="tab"
+                  title="CIELAB LCh Gamut Mask Wheel & Sketch Drift">Gamut Mask</button>
               </div>
 
               <!-- View 1: Dominant Harmony & Inspector Panel -->
@@ -1446,6 +1448,37 @@
                     No sketch loaded. Paste or upload a sketch ([Cmd+V] / [V]) to compare values.
                   </div>
                   <div id="value-map-delta-note" class="value-map-delta-note hidden"></div>
+                </div>
+              </div>
+
+              <!-- View 3: CIELAB LCh Gamut Mask & Color Wheel Panel -->
+              <div id="palette-view-gamut" class="palette-view-panel hidden">
+                <div class="gamut-wheel-container">
+                  <canvas id="gamut-wheel-canvas" width="280" height="280" class="gamut-wheel-canvas"></canvas>
+                </div>
+
+                <div class="gamut-metrics-card">
+                  <div class="gamut-metrics-row">
+                    <div class="gamut-metric-box">
+                      <span class="gamut-metric-label">Sketch Drift:</span>
+                      <strong id="gamut-drift-score" class="gamut-metric-val" title="Percent of sketch pixels outside reference gamut mask">—</strong>
+                    </div>
+                    <div class="gamut-metric-box">
+                      <span class="gamut-metric-label">Chroma Ratio:</span>
+                      <strong id="gamut-chroma-ratio" class="gamut-metric-val" title="Mean sketch chroma / Mean reference chroma">—</strong>
+                    </div>
+                    <button type="button" id="btn-reset-gamut-mask" class="btn btn-hud-mini" title="Reset mask to original 90% convex hull">
+                      ↺ Reset Mask
+                    </button>
+                  </div>
+                  <div class="gamut-legend-row">
+                    <span class="gamut-legend-pill ref-pill"><span class="legend-dot ref-dot"></span> Ref (90% Hull)</span>
+                    <span class="gamut-legend-pill sketch-in-pill"><span class="legend-dot in-dot"></span> Sketch Inside</span>
+                    <span class="gamut-legend-pill sketch-out-pill"><span class="legend-dot out-dot"></span> Drift (Outside)</span>
+                  </div>
+                  <div id="gamut-empty-sketch-hint" class="value-map-empty-hint">
+                    Paste or load a sketch ([Cmd+V] / [V]) to view color drift on the wheel.
+                  </div>
                 </div>
               </div>
             </div>

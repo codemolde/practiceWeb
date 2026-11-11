@@ -7078,6 +7078,102 @@ body.window-dragging-active * {
   display: none !important;
 }
 
+/* ==================== CIELAB LCh Gamut Mask Wheel ==================== */
+.gamut-wheel-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  position: relative;
+  padding: 4px 0;
+}
+
+.gamut-wheel-canvas {
+  width: 280px;
+  height: 280px;
+  border-radius: 50%;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  cursor: default;
+  touch-action: none;
+  background: #111;
+}
+
+.gamut-metrics-card {
+  background: rgba(0, 0, 0, 0.22);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gamut-metrics-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.gamut-metric-box {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gamut-metric-label {
+  font-size: 9.5px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.gamut-metric-val {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.gamut-legend-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-secondary);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding-top: 4px;
+}
+
+.gamut-legend-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.legend-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.legend-dot.ref-dot {
+  background: #f59e0b;
+  box-shadow: 0 0 4px rgba(245, 158, 11, 0.5);
+}
+
+.legend-dot.in-dot {
+  background: #38bdf8;
+  box-shadow: 0 0 4px rgba(56, 189, 248, 0.5);
+}
+
+.legend-dot.out-dot {
+  background: #ef4444;
+  box-shadow: 0 0 4px rgba(239, 68, 68, 0.5);
+}
+
 /* ==================== Live Eyedropper Loupe ==================== */
 .image-stage.eyedropper-active {
   cursor: crosshair !important;

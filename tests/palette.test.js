@@ -23,7 +23,16 @@ const {
   calculateBandPercentages,
   computeValueBands,
   generateDeltaNote,
-  posterizeImageDataToBands
+  posterizeImageDataToBands,
+  lchToSrgb,
+  lchToWheelCoords,
+  wheelCoordsToLch,
+  convexHull,
+  filterDominantPoints,
+  isPointInPolygon,
+  calculateDriftScore,
+  calculateMeanChromaRatio,
+  binPoints
 } = ColorPaletteManager;
 
 // ==================== TEST 1: STEP 1 REFACTOR INTEGRITY ====================
@@ -557,5 +566,319 @@ test('Value Map: index.html and app.js contract integration', () => {
   assert.ok(appJs.includes('ColorPaletteManager.applyValueMapToContext'), 'PiPCanvasStreamer in app.js must call ColorPaletteManager.applyValueMapToContext');
   assert.ok(appJs.includes('ColorPaletteManager.onSketchChanged'), 'SketchOverlay in app.js must notify ColorPaletteManager.onSketchChanged');
 });
+
+// ==================== TEST 15: GAMUT WHEEL COORDINATE TRANSFORMATIONS & ROUND-TRIP ====================
+test('Gamut Wheel: CIELAB LCh coordinate mapping and round-trip', () => {
+  const cx = 140;
+  const cy = 140;
+  const R = 130;
+  const maxChroma = 120;
+
+  // 1. Check exact orientation confirmed by user:
+  // 0° Red (+a*, 3 o'clock / Right)
+  const red = lchToWheelCoords(120, 0, cx, cy, R, maxChroma);
+  assert.equal(Math.round(red.x), 270, '0° Red should be at x = cx + R (270)');
+  assert.equal(Math.round(red.y), 140, '0° Red should be at y = cy (140)');
+
+  // 90° Yellow (+b*, 12 o'clock / Top)
+  const yellow = lchToWheelCoords(120, 90, cx, cy, R, maxChroma);
+  assert.equal(Math.round(yellow.x), 140, '90° Yellow should be at x = cx (140)');
+  assert.equal(Math.round(yellow.y), 10, '90° Yellow should be at y = cy - R (10)');
+
+  // 180° Cyan (-a*, 9 o'clock / Left)
+  const cyan = lchToWheelCoords(120, 180, cx, cy, R, maxChroma);
+  assert.equal(Math.round(cyan.x), 10, '180° Cyan should be at x = cx - R (10)');
+  assert.equal(Math.round(cyan.y), 140, '180° Cyan should be at y = cy (140)');
+
+  // 270° Blue (-b*, 6 o'clock / Bottom)
+  const blue = lchToWheelCoords(120, 270, cx, cy, R, maxChroma);
+  assert.equal(Math.round(blue.x), 140, '270° Blue should be at x = cx (140)');
+  assert.equal(Math.round(blue.y), 270, '270° Blue should be at y = cy + R (270)');
+
+  // 2. Center neutral: C = 0 maps to (cx, cy)
+  const neutral = lchToWheelCoords(0, 0, cx, cy, R, maxChroma);
+  assert.equal(Math.round(neutral.x), cx);
+  assert.equal(Math.round(neutral.y), cy);
+
+  // 3. Test round-trip: (C, h) -> (x, y) -> (C', h')
+  const testCases = [
+    { C: 25, h: 30 },
+    { C: 60, h: 120 },
+    { C: 85, h: 215 },
+    { C: 110, h: 310 }
+  ];
+
+  for (const tc of testCases) {
+    const coords = lchToWheelCoords(tc.C, tc.h, cx, cy, R, maxChroma);
+    const back = wheelCoordsToLch(coords.x, coords.y, cx, cy, R, maxChroma);
+    assert.ok(Math.abs(back.C - tc.C) < 0.1, `Chroma round-trip error for C=${tc.C}: got ${back.C}`);
+    assert.ok(Math.abs(back.h - tc.h) < 0.1, `Hue round-trip error for h=${tc.h}: got ${back.h}`);
+  }
+
+  // 4. Test lchToSrgb conversion
+  const rgbNeutral = lchToSrgb(50, 0, 0);
+  assert.ok(Math.abs(rgbNeutral.r - rgbNeutral.g) <= 1, 'Neutral gray should have r ~= g');
+  assert.ok(Math.abs(rgbNeutral.g - rgbNeutral.b) <= 1, 'Neutral gray should have g ~= b');
+
+  const rgbRed = lchToSrgb(53, 104, 40); // vibrant red
+  assert.ok(rgbRed.r > rgbRed.g && rgbRed.r > rgbRed.b, 'Red hue should have highest r channel');
+});
+
+// ==================== TEST 16: CONVEX HULL ON KNOWN POINT SETS ====================
+test('Gamut Wheel: Convex hull algorithm (Andrew\'s Monotone Chain)', () => {
+  // 1. Square with interior points: only the 4 outer corners should form the hull
+  const squarePoints = [
+    { x: 0, y: 0 },
+    { x: 10, y: 0 },
+    { x: 10, y: 10 },
+    { x: 0, y: 10 },
+    { x: 5, y: 5 },
+    { x: 2, y: 3 },
+    { x: 8, y: 7 },
+    { x: 1, y: 9 }
+  ];
+
+  const hullSquare = convexHull(squarePoints);
+  assert.equal(hullSquare.length, 4, 'Square with interior points must yield 4 hull vertices');
+
+  // Verify all 4 hull vertices are indeed the 4 corners
+  const cornerKeys = new Set(hullSquare.map(p => `${p.x},${p.y}`));
+  assert.ok(cornerKeys.has('0,0'), 'Hull must contain (0,0)');
+  assert.ok(cornerKeys.has('10,0'), 'Hull must contain (10,0)');
+  assert.ok(cornerKeys.has('10,10'), 'Hull must contain (10,10)');
+  assert.ok(cornerKeys.has('0,10'), 'Hull must contain (0,10)');
+
+  // Verify counter-clockwise orientation (cross product >= 0)
+  for (let i = 0; i < hullSquare.length; i++) {
+    const p1 = hullSquare[i];
+    const p2 = hullSquare[(i + 1) % hullSquare.length];
+    const p3 = hullSquare[(i + 2) % hullSquare.length];
+    const cross = (p2.x - p1.x) * (p3.y - p2.y) - (p2.y - p1.y) * (p3.x - p2.x);
+    assert.ok(cross >= -1e-9, `Cross product must be >= 0 for CCW hull; got ${cross}`);
+  }
+
+  // 2. Triangle with collinear points on edge and interior points
+  const trianglePoints = [
+    { x: 0, y: 0 },
+    { x: 10, y: 0 },
+    { x: 5, y: 0 }, // collinear on bottom edge
+    { x: 0, y: 10 },
+    { x: 2, y: 2 }  // interior
+  ];
+
+  const hullTri = convexHull(trianglePoints);
+  assert.equal(hullTri.length, 3, 'Triangle with collinear edge point must yield 3 vertices');
+  const triKeys = new Set(hullTri.map(p => `${p.x},${p.y}`));
+  assert.ok(triKeys.has('0,0'));
+  assert.ok(triKeys.has('10,0'));
+  assert.ok(triKeys.has('0,10'));
+
+  // 3. Degenerate cases
+  assert.deepEqual(convexHull([]), [], 'Empty point set yields empty hull');
+  assert.deepEqual(convexHull([{ x: 5, y: 5 }]), [{ x: 5, y: 5 }], 'Single point returns itself');
+  const twoPts = [{ x: 1, y: 1 }, { x: 2, y: 2 }];
+  const hullTwo = convexHull(twoPts);
+  assert.equal(hullTwo.length, 2, 'Two points returns both points');
+});
+
+// ==================== TEST 17: DOMINANT 90% OUTLIER FILTERING ====================
+test('Gamut Wheel: Outlier filtering for dominant 90% points', () => {
+  // Create 90 points tightly clustered around origin (0, 0)
+  const points = [];
+  for (let i = 0; i < 90; i++) {
+    const angle = (i * 2 * Math.PI) / 90;
+    const r = 1 + (i % 5); // radius 1 to 5
+    points.push({ x: r * Math.cos(angle), y: r * Math.sin(angle) });
+  }
+
+  // Add 10 extreme outlier points far away
+  for (let i = 0; i < 10; i++) {
+    points.push({ x: 200 + i * 10, y: 200 + i * 10 });
+  }
+
+  assert.equal(points.length, 100, 'Total 100 test points');
+
+  const filtered = filterDominantPoints(points, 0.90);
+  assert.equal(filtered.length, 90, 'Must retain exactly 90% (90) of points');
+
+  // Verify none of the 10 outliers made it into the filtered dominant set
+  for (const p of filtered) {
+    assert.ok(p.x < 50 && p.y < 50, `Outlier point (${p.x}, ${p.y}) should have been excluded`);
+  }
+});
+
+// ==================== TEST 18: POINT-IN-POLYGON (RAY CASTING) ====================
+test('Gamut Wheel: Point-in-polygon algorithm (convex and concave)', () => {
+  // 1. Convex square [0,0] to [10,10]
+  const squarePoly = [
+    { x: 0, y: 0 },
+    { x: 10, y: 0 },
+    { x: 10, y: 10 },
+    { x: 0, y: 10 }
+  ];
+
+  // Inside
+  assert.equal(isPointInPolygon({ x: 5, y: 5 }, squarePoly), true, '(5,5) is inside square');
+  assert.equal(isPointInPolygon({ x: 1, y: 1 }, squarePoly), true, '(1,1) is inside square');
+  assert.equal(isPointInPolygon({ x: 9, y: 9 }, squarePoly), true, '(9,9) is inside square');
+
+  // Outside
+  assert.equal(isPointInPolygon({ x: 15, y: 5 }, squarePoly), false, '(15,5) is outside square');
+  assert.equal(isPointInPolygon({ x: -2, y: 5 }, squarePoly), false, '(-2,5) is outside square');
+  assert.equal(isPointInPolygon({ x: 5, y: 15 }, squarePoly), false, '(5,15) is outside square');
+
+  // 2. Concave L-shaped polygon
+  // (0,0) -> (10,0) -> (10,5) -> (5,5) -> (5,10) -> (0,10)
+  const lShapePoly = [
+    { x: 0, y: 0 },
+    { x: 10, y: 0 },
+    { x: 10, y: 5 },
+    { x: 5, y: 5 },
+    { x: 5, y: 10 },
+    { x: 0, y: 10 }
+  ];
+
+  // Inside points
+  assert.equal(isPointInPolygon({ x: 2, y: 2 }, lShapePoly), true, '(2,2) is inside corner');
+  assert.equal(isPointInPolygon({ x: 8, y: 2 }, lShapePoly), true, '(8,2) is inside bottom arm');
+  assert.equal(isPointInPolygon({ x: 2, y: 8 }, lShapePoly), true, '(2,8) is inside top arm');
+
+  // Point in the concave cutout nook (5..10, 5..10)
+  assert.equal(isPointInPolygon({ x: 8, y: 8 }, lShapePoly), false, '(8,8) in cutout is outside');
+
+  // Degenerate polygon (< 3 vertices)
+  assert.equal(isPointInPolygon({ x: 0, y: 0 }, [{ x: 1, y: 1 }, { x: 2, y: 2 }]), false);
+  assert.equal(isPointInPolygon({ x: 0, y: 0 }, null), false);
+});
+
+// ==================== TEST 19: DRIFT SCORE & MEAN CHROMA RATIO ====================
+test('Gamut Wheel: Drift score and mean chroma ratio on synthetic palettes', () => {
+  const maskPoly = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 100 },
+    { x: 0, y: 100 }
+  ];
+
+  // 1. 100% inside polygon -> drift score 0%
+  const allInside = [
+    { x: 10, y: 10, C: 20 },
+    { x: 50, y: 50, C: 30 },
+    { x: 90, y: 90, C: 40 }
+  ];
+  assert.equal(calculateDriftScore(allInside, maskPoly), 0, 'All inside should give 0% drift score');
+
+  // 2. 100% outside polygon -> drift score 100%
+  const allOutside = [
+    { x: 150, y: 50, C: 60 },
+    { x: -20, y: 50, C: 70 },
+    { x: 50, y: 120, C: 80 }
+  ];
+  assert.equal(calculateDriftScore(allOutside, maskPoly), 100, 'All outside should give 100% drift score');
+
+  // 3. Half inside, half outside -> drift score 50%
+  const halfInsideHalfOut = [
+    { x: 20, y: 20, C: 30 },
+    { x: 30, y: 30, C: 30 },
+    { x: 150, y: 150, C: 30 },
+    { x: 200, y: 200, C: 30 }
+  ];
+  assert.equal(calculateDriftScore(halfInsideHalfOut, maskPoly), 50, 'Half outside should give 50% drift score');
+
+  // 4. Empty sketch -> drift score 0%
+  assert.equal(calculateDriftScore([], maskPoly), 0);
+  assert.equal(calculateDriftScore(null, maskPoly), 0);
+
+  // 5. Mean Chroma Ratio
+  const refPts = [
+    { C: 20 },
+    { C: 30 },
+    { C: 10 }
+  ]; // mean = 20
+
+  const sketchPtsHigher = [
+    { C: 30 },
+    { C: 40 },
+    { C: 20 }
+  ]; // mean = 30
+  // 30 / 20 = 1.50
+  assert.equal(calculateMeanChromaRatio(refPts, sketchPtsHigher), 1.50, 'Chroma ratio should be 1.50');
+
+  const sketchPtsLower = [
+    { C: 10 },
+    { C: 15 },
+    { C: 5 }
+  ]; // mean = 10
+  // 10 / 20 = 0.50
+  assert.equal(calculateMeanChromaRatio(refPts, sketchPtsLower), 0.50, 'Chroma ratio should be 0.50');
+
+  // Edge cases
+  assert.equal(calculateMeanChromaRatio([], sketchPtsHigher), 1.0);
+  assert.equal(calculateMeanChromaRatio(refPts, []), 1.0);
+  assert.equal(calculateMeanChromaRatio([{ C: 0 }], [{ C: 10 }]), 1.0, 'Zero ref chroma avoids division by zero');
+});
+
+// ==================== TEST 20: 2D SPATIAL BINNING FOR DENSITY-WEIGHTED SCATTER ====================
+test('Gamut Wheel: 2D spatial binning (binPoints)', () => {
+  const points = [
+    { x: 4, y: 4, r: 255, g: 0, b: 0 },
+    { x: 5, y: 5, r: 200, g: 0, b: 0 },
+    { x: 6, y: 6, r: 150, g: 0, b: 0 },
+    { x: 50, y: 50, r: 0, g: 255, b: 0 }
+  ];
+
+  // With binSize = 10, the first 3 points land in bin (0, 0), and the 4th in bin (5, 5)
+  const binned = binPoints(points, 10);
+  assert.equal(binned.length, 2, 'Should combine 4 points into 2 spatial bins');
+
+  const clusterBin = binned.find(b => b.count === 3);
+  assert.ok(clusterBin, 'Must have a bin with count 3');
+  assert.equal(Math.round(clusterBin.x), 5, 'Average x should be 5');
+  assert.equal(Math.round(clusterBin.y), 5, 'Average y should be 5');
+  assert.equal(Math.round(clusterBin.r), 202, 'Average r should be ~202');
+  assert.equal(clusterBin.g, 0);
+  assert.equal(clusterBin.b, 0);
+
+  // Empty point set
+  assert.deepEqual(binPoints([]), []);
+  assert.deepEqual(binPoints(null), []);
+});
+
+// ==================== TEST 21: GAMUT MASK DOM CONTRACTS & CANVAS RENDERING INTEGRITY ====================
+test('Gamut Wheel: DOM contracts, pure Canvas 2D rendering, and reset action', () => {
+  const indexHtml = fs.readFileSync(indexHtmlPath, 'utf8');
+
+  // 1. Verify HUD Tab and View Container
+  assert.ok(indexHtml.includes('id="tab-palette-gamut"'), 'Must have tab-palette-gamut in tabs bar');
+  assert.ok(indexHtml.includes('id="palette-view-gamut"'), 'Must have palette-view-gamut view panel');
+
+  // 2. Verify Canvas element exists with correct 280x280 dimensions
+  assert.ok(indexHtml.includes('id="gamut-wheel-canvas"'), 'Must have gamut-wheel-canvas element');
+  assert.ok(indexHtml.includes('width="280"'), 'Gamut wheel canvas width must be 280');
+  assert.ok(indexHtml.includes('height="280"'), 'Gamut wheel canvas height must be 280');
+
+  // 3. Verify Metrics & Reset Controls
+  assert.ok(indexHtml.includes('id="gamut-drift-score"'), 'Must have gamut-drift-score element');
+  assert.ok(indexHtml.includes('id="gamut-chroma-ratio"'), 'Must have gamut-chroma-ratio element');
+  assert.ok(indexHtml.includes('id="btn-reset-gamut-mask"'), 'Must have btn-reset-gamut-mask button');
+  assert.ok(indexHtml.includes('id="gamut-empty-sketch-hint"'), 'Must have gamut-empty-sketch-hint hint');
+
+  // 4. Verify pure Canvas 2D rendering constraint: NO SVG filters in palette.js gamut mask
+  const paletteCode = fs.readFileSync(paletteJsPath, 'utf8');
+  assert.ok(!paletteCode.includes('filter = \'url('), 'Gamut wheel rendering must not use SVG filter url');
+  assert.ok(!paletteCode.includes('<filter id="gamut'), 'No SVG filter definitions for gamut mask');
+
+  // 5. Verify palette.js gamut manager methods exist
+  assert.equal(typeof ColorPaletteManager.initGamutWheel, 'function');
+  assert.equal(typeof ColorPaletteManager.renderWheelBackground, 'function');
+  assert.equal(typeof ColorPaletteManager.updateGamutMaskUI, 'function');
+  assert.equal(typeof ColorPaletteManager.renderGamutWheel, 'function');
+  assert.equal(typeof ColorPaletteManager.onGamutPointerDown, 'function');
+  assert.equal(typeof ColorPaletteManager.onGamutPointerMove, 'function');
+  assert.equal(typeof ColorPaletteManager.onGamutPointerUp, 'function');
+  assert.equal(typeof ColorPaletteManager.onGamutPointerLeave, 'function');
+  assert.equal(typeof ColorPaletteManager.resetGamutMask, 'function');
+});
+
 
 
