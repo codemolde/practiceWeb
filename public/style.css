@@ -1388,15 +1388,23 @@ kbd {
 /* Session Image Meta & Card Tags */
 .session-image-meta {
   position: absolute;
-  bottom: 8px;
+  bottom: 30px;
   left: 0;
   right: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   pointer-events: none;
-  z-index: 10;
+  z-index: 25;
+}
+
+.session-image-meta > * {
+  pointer-events: auto;
+}
+
+#session-image-name {
+  pointer-events: none;
 }
 
 .session-card-tags {
@@ -3368,21 +3376,32 @@ body.zen-active .image-hud-dock.dock-open {
   pointer-events: auto;
 }
 
-/* -- Rating dock floats at the bottom -- */
+/* -- Rating dock in Zen / Fullscreen mode: auto-hiding drawer like normal studio mode -- */
 body.zen-active .rating-area {
-  position: fixed;
-  left: 50%;
-  bottom: 22px;
-  transform: translateX(-50%);
-  z-index: 30;
-  flex-direction: column;
+  position: fixed !important;
+  left: 50% !important;
+  bottom: 0 !important;
+  transform: translateX(-50%) translateY(100%) !important;
+  z-index: 30 !important;
+  flex-direction: column !important;
   gap: 8px;
-  padding: 10px 14px;
-  background: rgba(26, 26, 26, 0.95);
+  padding: 8px 16px 10px 16px;
+  background: rgba(22, 22, 22, 0.96);
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.7);
-  transition: opacity 0.35s ease, transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  border-bottom: none;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.7);
+  pointer-events: none;
+  transition: opacity 0.35s ease, transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+body.zen-active .rating-area.rating-open {
+  transform: translateX(-50%) translateY(0) !important;
+  pointer-events: auto !important;
+}
+
+body.zen-active .rating-area.rating-open > * {
+  pointer-events: auto !important;
 }
 
 body.zen-active .rating-prompt {
@@ -3424,10 +3443,14 @@ body.zen-active.hud-idle .image-name {
   opacity: 0;
 }
 
-/* The timer has run out — the rating dock must stay reachable */
-body.zen-active.hud-idle:not(.rating-required) .rating-area {
+body.zen-active.hud-idle .session-image-meta {
   opacity: 0;
-  transform: translate(-50%, 24px);
+  pointer-events: none;
+}
+
+/* The timer has run out or user explicitly opened the rating dock — the rating dock must stay reachable */
+body.zen-active.hud-idle:not(.rating-required):not(.rating-open) .rating-area {
+  opacity: 0;
   pointer-events: none;
 }
 
@@ -6152,6 +6175,9 @@ body.pip-mode .skip-subtext {
   padding: 3px 10px;
   border-radius: var(--radius-sm);
   cursor: pointer;
+  pointer-events: auto;
+  user-select: none;
+  -webkit-app-region: no-drag;
   transition: all 0.15s ease;
   margin-top: 6px;
 }
@@ -7574,6 +7600,10 @@ body.window-dragging-active * {
   border-radius: var(--radius-sm);
   font-size: 11.5px;
   color: var(--text-secondary);
+  pointer-events: auto;
+  user-select: none;
+  -webkit-app-region: no-drag;
+  z-index: 2;
 }
 
 .btn-focal-toggle {
@@ -7584,6 +7614,7 @@ body.window-dragging-active * {
   color: #f59e0b;
   font-size: 10.5px;
   cursor: pointer;
+  pointer-events: auto;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -7599,6 +7630,27 @@ body.window-dragging-active * {
   background: rgba(0, 0, 0, 0.4);
   border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 2px;
+}
+
+.btn-danger-micro {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  color: #f87171;
+  font-size: 10.5px;
+  cursor: pointer;
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  transition: all 0.15s ease;
+}
+
+.btn-danger-micro:hover {
+  background: rgba(239, 68, 68, 0.28);
+  border-color: rgba(239, 68, 68, 0.55);
+  color: #fca5a5;
 }
 
 /* Image frame focal crop clip-path state */

@@ -24,6 +24,7 @@ function setupTestEnvironment() {
       tagName: tagName.toUpperCase(),
       dataset,
       style,
+      value: '',
       title: '',
       setAttribute(k, v) { attributes[k] = String(v); },
       getAttribute(k) { return attributes[k] !== undefined ? attributes[k] : null; },
@@ -79,6 +80,15 @@ function setupTestEnvironment() {
         const idx = children.indexOf(c);
         if (idx !== -1) children.splice(idx, 1);
         return c;
+      },
+      getContext() {
+        return {
+          drawImage() { },
+          getImageData() { return { data: new Uint8ClampedArray(4) }; }
+        };
+      },
+      toDataURL() {
+        return 'data:image/png;base64,iVBORw0KGgo=';
       }
     };
     elements.set(id, el);
@@ -95,7 +105,9 @@ function setupTestEnvironment() {
     'floating-heatmap-tooltip', 'todays-reviewed-count', 'todays-reviewed-summary',
     'stat-total', 'stat-due', 'stat-reviewed', 'stat-new', 'btn-new-count', 'btn-review-count',
     'btn-study-new', 'btn-review', 'btn-free-study',
-    'image-blur-overlay', 'btn-skip', 'btn-rating-toggle'
+    'image-blur-overlay', 'btn-skip', 'btn-rating-toggle',
+    'image-stage', 'btn-art-crop', 'crop-box', 'crop-popover', 'btn-confirm-crop',
+    'btn-toggle-crop-context', 'btn-remove-crop', 'focal-pill-title', 'focal-context-btn-text'
   ];
   docElements.forEach(id => makeElement(id));
 
@@ -130,6 +142,10 @@ function setupTestEnvironment() {
     setTimeout,
     clearTimeout,
     Date: global.Date,
+    fetch: async () => ({
+      ok: true,
+      json: async () => ({})
+    }),
     AudioContext: class {
       constructor() { this.state = 'suspended'; this.destination = {}; }
       createOscillator() { return { type: 'sine', frequency: { setValueAtTime() { }, exponentialRampToValueAtTime() { } }, connect() { }, start() { }, stop() { } }; }
@@ -145,7 +161,7 @@ function setupTestEnvironment() {
 
   vm.createContext(context);
   const exported = vm.runInContext(
-    appJsCode + '\n;({ UI, PiPCanvasStreamer, TimerManager, CardManager, DeckManager, ReviewHistory, ArtistToolbox, SoundFX, SmartCropManager, localDateStr })',
+    appJsCode + '\n;({ UI, PiPCanvasStreamer, TimerManager, CardManager, DeckManager, SessionManager, ReviewHistory, ArtistToolbox, SoundFX, SmartCropManager, localDateStr })',
     context
   );
 
@@ -419,4 +435,130 @@ test('UI.showBlurOverlay opens rating dock with Hide label, and toggleRatingDock
     css.includes('.rating-area.rating-open .rating-arrow-icon'),
     'style.css must scope open rating dock transform and arrow icon rotation to .rating-open'
   );
+});
+
+// ==================== TEST G: SMART CROP SAVES DIRECTLY TO CARD & REMOVE CROP ====================
+test('SmartCropManager saves crop directly onto existing card, toggles view, and removeCrop deletes file while preserving card and SRS history intact (MOCKED)', async () => {
+  const env = setupTestEnvironment();
+  const { UI, CardManager, DeckManager, SessionManager, SmartCropManager, context, elements } = env;
+
+  DeckManager.init();
+  CardManager.init();
+
+  const deck = DeckManager.create('Figure Deck', '/figures', 20, 200);
+  const deckId = deck.id;
+  UI.currentDeckId = deckId;
+
+  const parentImage = {
+    id: 'fig_pose_1',
+    name: 'fig_pose_1.jpg',
+    path: '/figures/fig_pose_1.jpg',
+    url: '/api/image?path=%2Ffigures%2Ffig_pose_1.jpg'
+  };
+
+  // 1. Existing card with previous review history
+  const card = CardManager.rateCard(deckId, parentImage.id, parentImage.name, 'medium', 120);
+  assert.equal(card.reviewCount, 1);
+  assert.equal(card.difficulty, 'medium');
+  assert.ok(card.interval >= 1);
+
+  // CardManager.getOrCreateCard returns existing card with preserved stats
+  const retrievedCard = CardManager.getOrCreateCard(deckId, parentImage.id, parentImage.name);
+  assert.equal(retrievedCard.imageId, parentImage.id);
+  assert.equal(retrievedCard.reviewCount, 1);
+  assert.equal(retrievedCard.difficulty, 'medium');
+
+  // 2. Set up session image elements and mock fetch for /api/crop
+  SessionManager.currentImage = parentImage;
+  SessionManager.deckId = deckId;
+
+  const imgEl = elements.get('session-image');
+  imgEl.naturalWidth = 1000;
+  imgEl.naturalHeight = 800;
+  imgEl.src = parentImage.url;
+
+  const stageEl = elements.get('image-stage');
+  const focalPill = elements.get('session-focal-pill');
+
+  let apiCalls = [];
+  context.fetch = async (url, options = {}) => {
+    apiCalls.push({ url, options });
+    if (url === '/api/crop') {
+      if (options.method === 'POST') {
+        return {
+          ok: true,
+          json: async () => ({
+            ok: true,
+            cropPath: '/figures/_crops/crop_999.png',
+            cropUrl: '/api/image?path=%2Ffigures%2F_crops%2Fcrop_999.png'
+          })
+        };
+      }
+      if (options.method === 'DELETE') {
+        return {
+          ok: true,
+          json: async () => ({ ok: true })
+        };
+      }
+    }
+    return { ok: true, json: async () => ({}) };
+  };
+
+  // 3. Confirm crop on existing card
+  SmartCropManager.selectedTags = ['hands'];
+  await SmartCropManager.confirmCrop();
+
+  // Verify POST /api/crop was called with proper payload
+  const postCall = apiCalls.find(c => c.url === '/api/crop' && c.options.method === 'POST');
+  assert.ok(postCall, 'POST /api/crop was called');
+  const postPayload = JSON.parse(postCall.options.body);
+  assert.equal(postPayload.folderPath, '/figures');
+  assert.equal(postPayload.cardId, 'fig_pose_1');
+  assert.equal(postPayload.tag, 'hands');
+  assert.ok(postPayload.dataUrl.startsWith('data:image/png;base64,'));
+
+  // Verify card object updated in place without creating a child card
+  const cardsInDeck = CardManager.getCardsForDeck(deckId);
+  assert.equal(Object.keys(cardsInDeck).length, 1, 'No separate child card was created');
+  assert.ok(card.cropImage, 'card.cropImage is populated');
+  assert.equal(card.cropImage.cropPath, '/figures/_crops/crop_999.png');
+  assert.equal(card.cropImage.tag, 'hands');
+  assert.ok(card.tags.includes('crop'), 'card.tags includes "crop"');
+  assert.ok(card.tags.includes('hands'), 'card.tags includes "hands"');
+
+  // Verify reference image src set directly to cropUrl and focal pill active
+  assert.equal(imgEl.src, '/api/image?path=%2Ffigures%2F_crops%2Fcrop_999.png');
+  assert.equal(SmartCropManager.isFocalMode, true);
+  assert.equal(focalPill.classList.contains('active'), true);
+  assert.equal(focalPill.classList.contains('hidden'), false);
+
+  // 4. Toggle between crop and full image via toggleFocalContext (Shift+C)
+  SmartCropManager.toggleFocalContext();
+  assert.equal(SmartCropManager.isFocalMode, false);
+  assert.equal(imgEl.src, parentImage.url, 'Shift+C toggles to full reference image');
+
+  SmartCropManager.toggleFocalContext();
+  assert.equal(SmartCropManager.isFocalMode, true);
+  assert.equal(imgEl.src, '/api/image?path=%2Ffigures%2F_crops%2Fcrop_999.png', 'Shift+C toggles back to cropped image');
+
+  // 5. Remove ONLY the crop
+  await SmartCropManager.removeCrop();
+
+  // Verify DELETE /api/crop was called
+  const deleteCall = apiCalls.find(c => c.url === '/api/crop' && c.options.method === 'DELETE');
+  assert.ok(deleteCall, 'DELETE /api/crop was called');
+  const deletePayload = JSON.parse(deleteCall.options.body);
+  assert.equal(deletePayload.cropPath, '/figures/_crops/crop_999.png');
+
+  // Verify card.cropImage deleted, tags removed, card itself and SRS history PRESERVED
+  assert.equal(card.cropImage, undefined, 'card.cropImage removed');
+  assert.equal(card.tags.includes('crop'), false, '"crop" removed from card.tags');
+  assert.equal(card.tags.includes('hands'), false, '"hands" tag removed from card.tags');
+  assert.equal(cardsInDeck[parentImage.id], card, 'Card still exists in CardManager');
+  assert.equal(card.reviewCount, 1, 'SRS review count preserved');
+  assert.equal(card.difficulty, 'medium', 'SRS difficulty preserved');
+
+  // Reference image reverted to parent image, pill hidden
+  assert.equal(imgEl.src, parentImage.url, 'Image src switched back to full parent reference');
+  assert.equal(focalPill.classList.contains('hidden'), true, 'Focal pill hidden after crop removal');
 });

@@ -1748,13 +1748,24 @@ if (isElectron && app) {
       setupApplicationMenu();
       setupTray();
 
-      // Deny all unnecessary device/sensor/hardware permission requests by default
+      // Deny all unnecessary device/sensor/hardware permission requests by default,
+      // while allowing standard 'fullscreen' display requests for the trusted local app origin
       if (session && session.defaultSession) {
         session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-          console.warn(`[Security] Denied permission request '${permission}' from:`, webContents?.getURL());
+          const url = webContents && typeof webContents.getURL === 'function' ? webContents.getURL() : '';
+          if (permission === 'fullscreen' && isTrustedAppUrl(url, serverPort)) {
+            return callback(true);
+          }
+          console.warn(`[Security] Denied permission request '${permission}' from:`, url);
           callback(false);
         });
-        session.defaultSession.setPermissionCheckHandler(() => false);
+        session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
+          const url = webContents && typeof webContents.getURL === 'function' ? webContents.getURL() : '';
+          if (permission === 'fullscreen' && isTrustedAppUrl(url, serverPort)) {
+            return true;
+          }
+          return false;
+        });
       }
 
       // Register global shortcuts: keep ONLY CmdOrCtrl+Shift+G

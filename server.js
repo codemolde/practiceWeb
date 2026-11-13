@@ -288,8 +288,8 @@ function scanForImages(dirPath, results = []) {
   for (const entry of entries) {
     const fullPath = path.join(dirPath, entry.name);
     if (entry.isDirectory()) {
-      // Skip hidden directories
-      if (!entry.name.startsWith('.')) {
+      // Skip hidden directories and _crops subdirectories
+      if (!entry.name.startsWith('.') && entry.name.toLowerCase() !== '_crops') {
         scanForImages(fullPath, results);
       }
     } else if (entry.isFile()) {
@@ -337,8 +337,8 @@ app.get('/api/browse', (req, res) => {
   let imageCount = 0;
 
   for (const entry of entries) {
-    // Skip hidden files/dirs
-    if (entry.name.startsWith('.')) continue;
+    // Skip hidden files/dirs and _crops
+    if (entry.name.startsWith('.') || entry.name.toLowerCase() === '_crops') continue;
 
     if (entry.isDirectory()) {
       dirs.push(entry.name);
@@ -976,6 +976,189 @@ app.get('/api/sketch/:filename', (req, res) => {
   }
 });
 
+/**
+ * POST /api/crop
+ * Accepts JSON { folderPath, dataUrl, cardId, tag }
+ * Verifies folderPath is a trusted/registered deck folder,
+ * validates decoded image buffer (PNG/JPEG/WebP magic bytes, max 15MB),
+ * ensures <deckFolder>/_crops exists,
+ * saves to <deckFolder>/_crops/crop_<timestamp>_<randomHex>.<ext>,
+ * and returns JSON { ok: true, cropPath, cropUrl }.
+ */
+app.post('/api/crop', (req, res) => {
+  try {
+    const { folderPath, dataUrl, cardId, tag } = req.body || {};
+    if (!folderPath || typeof folderPath !== 'string' || !dataUrl || typeof dataUrl !== 'string') {
+      return res.status(400).json({ error: 'Missing or invalid folderPath or dataUrl' });
+    }
+
+    const resolvedFolder = path.resolve(folderPath);
+    if (!fs.existsSync(resolvedFolder)) {
+      return res.status(404).json({ error: `Folder not found: ${resolvedFolder}` });
+    }
+
+    let realFolder;
+    try {
+      realFolder = fs.realpathSync(resolvedFolder);
+    } catch (err) {
+      return res.status(404).json({ error: `Folder not found: ${resolvedFolder}` });
+    }
+
+    const stat = fs.statSync(realFolder);
+    if (!stat.isDirectory()) {
+      return res.status(400).json({ error: `Not a directory: ${resolvedFolder}` });
+    }
+
+    if (!isPathAllowedInRegisteredDecks(realFolder)) {
+      return res.status(403).json({ error: 'Access denied: folderPath must be a registered deck folder' });
+    }
+
+    const base64Data = dataUrl.replace(/^data:image\/[a-zA-Z0-9+]+;base64,/, '');
+    const buffer = Buffer.from(base64Data, 'base64');
+
+    // Reject over 15 MB decoded
+    const MAX_CROP_BYTES = 15 * 1024 * 1024;
+    if (buffer.length > MAX_CROP_BYTES) {
+      return res.status(413).json({ error: 'Payload too large: crop exceeds 15 MB' });
+    }
+
+    // Magic bytes verification for PNG / JPEG / WebP
+    let imgExt = null;
+    if (
+      buffer.length >= 8 &&
+      buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47 &&
+      buffer[4] === 0x0d && buffer[5] === 0x0a && buffer[6] === 0x1a && buffer[7] === 0x0a
+    ) {
+      imgExt = 'png';
+    } else if (
+      buffer.length >= 3 &&
+      buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff
+    ) {
+      imgExt = 'jpg';
+    } else if (
+      buffer.length >= 12 &&
+      buffer.toString('ascii', 0, 4) === 'RIFF' &&
+      buffer.toString('ascii', 8, 12) === 'WEBP'
+    ) {
+      imgExt = 'webp';
+    }
+
+    if (!imgExt) {
+      return res.status(415).json({ error: 'Invalid image format: buffer magic bytes must be PNG, JPEG, or WebP' });
+    }
+
+    const cropsDir = path.join(realFolder, '_crops');
+    if (!fs.existsSync(cropsDir)) {
+      fs.mkdirSync(cropsDir, { recursive: true });
+    }
+
+    const randomHex = crypto.randomBytes(4).toString('hex');
+    const filename = `crop_${Date.now()}_${randomHex}.${imgExt}`;
+    const savedFilePath = path.join(cropsDir, filename);
+
+    fs.writeFileSync(savedFilePath, buffer);
+
+    res.json({
+      ok: true,
+      cropPath: savedFilePath,
+      cropUrl: '/api/image?path=' + encodeURIComponent(savedFilePath)
+    });
+  } catch (err) {
+    console.error('[API /api/crop] Error saving crop:', err);
+    res.status(500).json({ error: `Failed to save crop: ${err.message}` });
+  }
+});
+
+/**
+ * DELETE /api/crop
+ * Accepts JSON { cropPath }
+ * Verifies cropPath resides inside a _crops subfolder within a registered deck folder,
+ * unlinks the file from disk (ignoring ENOENT if already gone), and returns JSON { ok: true }.
+ */
+app.delete('/api/crop', (req, res) => {
+  try {
+    const cropPath = (req.body && req.body.cropPath) ? req.body.cropPath : (req.query && (req.query.cropPath || req.query.path));
+    if (!cropPath || typeof cropPath !== 'string') {
+      return res.status(400).json({ error: 'Missing or invalid cropPath' });
+    }
+
+    const resolved = path.resolve(cropPath);
+    let realCropPath;
+    try {
+      realCropPath = fs.realpathSync(resolved);
+    } catch (err) {
+      if (err.code === 'ENOENT') {
+        const parentDir = path.dirname(resolved);
+        try {
+          const realParent = fs.realpathSync(parentDir);
+          realCropPath = path.join(realParent, path.basename(resolved));
+        } catch (e) {
+          realCropPath = resolved;
+        }
+      } else {
+        return res.status(400).json({ error: `Invalid crop path: ${err.message}` });
+      }
+    }
+
+    if (fs.existsSync(realCropPath) && fs.statSync(realCropPath).isDirectory()) {
+      return res.status(400).json({ error: 'Target path is a directory, not a crop file' });
+    }
+
+    const deckFolders = getRegisteredDeckFolders();
+    let isInsideRegisteredCrops = false;
+
+    for (const df of deckFolders) {
+      let realDf;
+      try {
+        realDf = fs.realpathSync(df);
+      } catch (e) {
+        realDf = path.resolve(df);
+      }
+
+      // Check if realCropPath is inside <realDf>/_crops
+      const allowedCropsDir = path.join(realDf, '_crops');
+      let realCropsDir;
+      try {
+        realCropsDir = fs.realpathSync(allowedCropsDir);
+      } catch (e) {
+        realCropsDir = path.resolve(allowedCropsDir);
+      }
+
+      if (isPathInside(realCropPath, realCropsDir) && realCropPath !== realCropsDir) {
+        isInsideRegisteredCrops = true;
+        break;
+      }
+
+      // Also allow subdirectories inside realDf that have a _crops directory
+      if (isPathInside(realCropPath, realDf) && realCropPath !== realDf) {
+        const relativeParts = path.relative(realDf, realCropPath).split(path.sep);
+        const cropsIndex = relativeParts.indexOf('_crops');
+        if (cropsIndex !== -1 && cropsIndex < relativeParts.length - 1) {
+          isInsideRegisteredCrops = true;
+          break;
+        }
+      }
+    }
+
+    if (!isInsideRegisteredCrops) {
+      return res.status(403).json({ error: 'Access denied: cropPath must reside inside a _crops subfolder of a registered deck folder' });
+    }
+
+    try {
+      fs.unlinkSync(realCropPath);
+    } catch (err) {
+      if (err.code !== 'ENOENT') {
+        throw err;
+      }
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[API /api/crop DELETE] Error deleting crop:', err);
+    res.status(500).json({ error: `Failed to delete crop: ${err.message}` });
+  }
+});
+
 // ==================== SSRF Protection & Safe Network Client ====================
 
 // IPv4 private & reserved ranges (RFC 1122, RFC 1918, RFC 3927, RFC 5737, RFC 6598, etc.)
@@ -1420,14 +1603,6 @@ app.post('/api/download-url', async (req, res) => {
       return res.status(400).json({ error: 'Missing "folderPath" or "url" in request body' });
     }
 
-    const trimmedUrl = String(url).trim();
-
-    // Upfront SSRF validation on the initial URL
-    const initialCheck = await validateExternalUrl(trimmedUrl);
-    if (initialCheck.blocked) {
-      return res.status(400).json({ error: initialCheck.reason });
-    }
-
     const resolvedFolder = path.resolve(folderPath);
     if (!fs.existsSync(resolvedFolder)) {
       return res.status(404).json({ error: `Target folder not found: ${resolvedFolder}` });
@@ -1443,6 +1618,14 @@ app.post('/api/download-url', async (req, res) => {
       if (!isPathAllowedInRegisteredDecks(resolvedFolder)) {
         return res.status(403).json({ error: 'Access denied: folderPath must be a registered deck folder' });
       }
+    }
+
+    const trimmedUrl = String(url).trim();
+
+    // Upfront SSRF validation on the initial URL
+    const initialCheck = await validateExternalUrl(trimmedUrl);
+    if (initialCheck.blocked) {
+      return res.status(400).json({ error: initialCheck.reason });
     }
 
     let targetImageUrl = trimmedUrl;

@@ -1713,16 +1713,17 @@
                 </svg></span> <strong id="history-pill-text">0 Past Attempts</strong> <kbd>Y</kbd>
             </div>
             <div id="session-focal-pill" class="session-focal-pill hidden"
-              title="Focal Point Child Card — Toggle full context [Shift+C]">
+              title="Crop View — Toggle full image [Shift+C]">
               <span class="focal-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <circle cx="11" cy="11" r="8" />
-                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                </svg></span> <strong id="focal-pill-title">Focal Point: Hands</strong>
+                  <path d="M6 2v14a2 2 0 0 0 2 2h14" />
+                  <path d="M18 22V8a2 2 0 0 0-2-2H2" />
+                </svg></span> <strong id="focal-pill-title">Crop: #hands</strong>
               <button type="button" id="btn-toggle-crop-context" class="btn-focal-toggle"
-                title="Toggle between focal crop and full image [Shift+C]">
-                <span id="focal-context-btn-text">Full Reference</span> <kbd>Shift+C</kbd>
+                title="Toggle between cropped view and full image [Shift+C]">
+                <span id="focal-context-btn-text">Full Image</span> <kbd>Shift+C</kbd>
               </button>
+              <button type="button" id="btn-remove-crop" class="btn-danger-micro" title="Remove crop only (keep card)">Remove Crop</button>
             </div>
             <div id="session-card-tags" class="session-card-tags"></div>
           </div>

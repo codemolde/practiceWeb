@@ -367,4 +367,236 @@ test('Deck Folder Trust & Endpoint Access Control Tests', async (t) => {
       else delete require.cache[require.resolve('../electron-main.js')];
     }
   });
+
+  await t.test('7. POST /api/crop validates folder trust, magic bytes, size limits, and saves to _crops (AUTOMATED-RAN)', async () => {
+    process.env.APP_RUNTIME = 'electron';
+    registerTrustedFolder(pickedFolder);
+
+    const validPngBase64 = 'data:image/png;base64,' + Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+      0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52
+    ]).toString('base64');
+
+    const validJpgBase64 = 'data:image/jpeg;base64,' + Buffer.from([
+      0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46
+    ]).toString('base64');
+
+    const validWebpBase64 = 'data:image/webp;base64,' + Buffer.concat([
+      Buffer.from('RIFF'),
+      Buffer.from([0x00, 0x00, 0x00, 0x00]),
+      Buffer.from('WEBP'),
+      Buffer.from('VP8 ')
+    ]).toString('base64');
+
+    // 1. Unregistered folder -> 403
+    const resUnregistered = await fetch(`${baseUrl}/api/crop`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        folderPath: unregisteredFolder,
+        dataUrl: validPngBase64
+      })
+    });
+    assert.equal(resUnregistered.status, 403, 'POST /api/crop rejects unregistered folder with 403');
+    const unregBody = await resUnregistered.json();
+    assert.ok(unregBody.error.includes('Access denied'));
+
+    // 2. Missing fields -> 400
+    const resMissing = await fetch(`${baseUrl}/api/crop`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folderPath: pickedFolder })
+    });
+    assert.equal(resMissing.status, 400, 'POST /api/crop rejects missing dataUrl with 400');
+
+    // 3. Invalid magic bytes (e.g. text/html) -> 415
+    const invalidFormatBase64 = 'data:text/plain;base64,' + Buffer.from('hello not an image').toString('base64');
+    const resBadFormat = await fetch(`${baseUrl}/api/crop`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        folderPath: pickedFolder,
+        dataUrl: invalidFormatBase64
+      })
+    });
+    assert.equal(resBadFormat.status, 415, 'POST /api/crop rejects invalid magic bytes with 415');
+
+    // 4. Successful PNG crop
+    const resPng = await fetch(`${baseUrl}/api/crop`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        folderPath: pickedFolder,
+        dataUrl: validPngBase64,
+        cardId: 'card_123',
+        tag: 'focal-point'
+      })
+    });
+    assert.equal(resPng.status, 200, 'POST /api/crop succeeds with valid PNG');
+    const pngBody = await resPng.json();
+    assert.equal(pngBody.ok, true);
+    assert.ok(pngBody.cropPath.includes(path.join(pickedFolder, '_crops')));
+    assert.ok(pngBody.cropPath.endsWith('.png'));
+    assert.ok(pngBody.cropUrl.startsWith('/api/image?path='));
+    assert.ok(fs.existsSync(pngBody.cropPath), 'Saved crop file exists on disk');
+
+    // Verify cropUrl is servable via /api/image
+    const resServed = await fetch(`${baseUrl}${pngBody.cropUrl}`);
+    assert.equal(resServed.status, 200, '/api/image serves saved crop file');
+    assert.equal(resServed.headers.get('content-type'), 'image/png');
+
+    // 5. Successful JPG and WEBP crops
+    const resJpg = await fetch(`${baseUrl}/api/crop`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        folderPath: pickedFolder,
+        dataUrl: validJpgBase64
+      })
+    });
+    assert.equal(resJpg.status, 200);
+    const jpgBody = await resJpg.json();
+    assert.ok(jpgBody.cropPath.endsWith('.jpg'));
+    assert.ok(fs.existsSync(jpgBody.cropPath));
+
+    const resWebp = await fetch(`${baseUrl}/api/crop`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        folderPath: pickedFolder,
+        dataUrl: validWebpBase64
+      })
+    });
+    assert.equal(resWebp.status, 200);
+    const webpBody = await resWebp.json();
+    assert.ok(webpBody.cropPath.endsWith('.webp'));
+    assert.ok(fs.existsSync(webpBody.cropPath));
+  });
+
+  await t.test('8. GET /api/images excludes _crops subdirectories from recursive scan (AUTOMATED-RAN)', async () => {
+    process.env.APP_RUNTIME = 'electron';
+
+    // pickedFolder now contains picked1.png, picked2.jpg, and _crops/ with 3 crop files
+    const resImages = await fetch(`${baseUrl}/api/images?folder=${encodeURIComponent(pickedFolder)}`);
+    assert.equal(resImages.status, 200);
+    const images = await resImages.json();
+
+    // Must only have picked1.png and picked2.jpg, NOT the crop files
+    assert.equal(images.length, 2, 'images count must be 2, ignoring _crops');
+    const paths = images.map(img => img.path);
+    assert.ok(paths.some(p => p.includes('picked1.png')));
+    assert.ok(paths.some(p => p.includes('picked2.jpg')));
+    assert.ok(!paths.some(p => p.includes('_crops')), 'No _crops paths included in GET /api/images');
+  });
+
+  await t.test('9. DELETE /api/crop unlinks crop file and forbids deleting parent reference or outside files (AUTOMATED-RAN)', async () => {
+    process.env.APP_RUNTIME = 'electron';
+    registerTrustedFolder(pickedFolder);
+
+    // 1. Create a dedicated crop file to delete
+    const cropsDir = path.join(pickedFolder, '_crops');
+    fs.mkdirSync(cropsDir, { recursive: true });
+    const cropFile = path.join(cropsDir, 'crop_test_delete.png');
+    fs.writeFileSync(cropFile, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    assert.ok(fs.existsSync(cropFile), 'Crop file exists before delete');
+
+    // 2. Reject missing cropPath -> 400
+    const resMissing = await fetch(`${baseUrl}/api/crop`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    assert.equal(resMissing.status, 400, 'DELETE /api/crop rejects missing cropPath with 400');
+
+    // 3. Forbid deleting parent reference file picked1.png -> 403
+    const resParent = await fetch(`${baseUrl}/api/crop`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cropPath: pickedImg1 })
+    });
+    assert.equal(resParent.status, 403, 'DELETE /api/crop rejects deleting parent reference with 403');
+    assert.ok(fs.existsSync(pickedImg1), 'Parent reference file remains intact');
+
+    // 4. Forbid deleting via path traversal (<pickedFolder>/_crops/../picked1.png) -> 403
+    const traversalPath = path.join(cropsDir, '..', 'picked1.png');
+    const resTraversal = await fetch(`${baseUrl}/api/crop`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cropPath: traversalPath })
+    });
+    assert.equal(resTraversal.status, 403, 'DELETE /api/crop rejects path traversal with 403');
+    assert.ok(fs.existsSync(pickedImg1), 'Parent reference file still exists');
+
+    // 5. Forbid deleting outside unregistered file -> 403
+    const resOutside = await fetch(`${baseUrl}/api/crop`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cropPath: outsideImg })
+    });
+    assert.equal(resOutside.status, 403, 'DELETE /api/crop rejects deleting outside file with 403');
+    assert.ok(fs.existsSync(outsideImg), 'Outside file remains intact');
+
+    // 6. Successfully delete valid crop file -> 200 { ok: true }
+    const resDelete = await fetch(`${baseUrl}/api/crop`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cropPath: cropFile })
+    });
+    assert.equal(resDelete.status, 200, 'DELETE /api/crop deletes valid crop');
+    const deleteBody = await resDelete.json();
+    assert.equal(deleteBody.ok, true);
+    assert.equal(fs.existsSync(cropFile), false, 'Crop file was unlinked from disk');
+
+    // 7. Deleting already deleted crop file (ENOENT) -> 200 { ok: true }
+    const resDeleteAgain = await fetch(`${baseUrl}/api/crop`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cropPath: cropFile })
+    });
+    assert.equal(resDeleteAgain.status, 200, 'DELETE /api/crop ignores ENOENT and returns 200 { ok: true }');
+    const deleteAgainBody = await resDeleteAgain.json();
+    assert.equal(deleteAgainBody.ok, true);
+  });
+
+  await t.test('10. Origin Gate and Host header middleware protects /api/crop (AUTOMATED-RAN)', async () => {
+    // 1. Host header protection
+    const badHostStatus = await new Promise((resolve, reject) => {
+      const req = http.request({
+        hostname: '127.0.0.1',
+        port: boundPort,
+        path: '/api/crop',
+        method: 'POST',
+        headers: {
+          Host: 'evil.com',
+          'Content-Type': 'application/json'
+        }
+      }, (res) => resolve(res.statusCode));
+      req.on('error', reject);
+      req.write(JSON.stringify({ folderPath: pickedFolder }));
+      req.end();
+    });
+    assert.equal(badHostStatus, 403, 'Host: evil.com rejected with 403');
+
+    // 2. Cross-origin POST protection
+    const crossOriginRes = await fetch(`${baseUrl}/api/crop`, {
+      method: 'POST',
+      headers: {
+        Origin: 'http://malicious.example.com',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ folderPath: pickedFolder })
+    });
+    assert.equal(crossOriginRes.status, 403, 'Cross-origin POST rejected with 403');
+
+    // 3. Cross-origin DELETE protection
+    const crossOriginDelete = await fetch(`${baseUrl}/api/crop`, {
+      method: 'DELETE',
+      headers: {
+        Origin: 'http://malicious.example.com',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ cropPath: path.join(pickedFolder, '_crops', 'some.png') })
+    });
+    assert.equal(crossOriginDelete.status, 403, 'Cross-origin DELETE rejected with 403');
+  });
 });
