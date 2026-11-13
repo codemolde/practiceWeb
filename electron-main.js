@@ -1227,9 +1227,6 @@ function createMainWindow(port) {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
-    if (process.env.DEVTOOLS || process.argv.includes('--devtools') || process.argv.includes('--debug')) {
-      mainWindow.webContents.openDevTools();
-    }
   });
 
   // Load the running Express application (with ?electron=1 parameter for instant detection)
