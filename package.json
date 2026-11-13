@@ -9,6 +9,7 @@
     "start": "node server.js",
     "test": "node --test --test-concurrency=1 tests/*.test.js",
     "electron": "electron .",
+    "electron:devtools": "electron . --devtools",
     "dist:mac": "electron-builder --mac",
     "dist:win": "electron-builder --win"
   },
